@@ -91,7 +91,7 @@ export function ChecklistsPage({ templates }: ChecklistsPageProps) {
           .from('audit_report_items')
           .select('audit_item_id,item_text,is_pass,is_critical,audit_reports(checklist_name)')
           .eq('organization_id', organizationId)
-          .or('is_pass.eq.false,score_earned.lt.score_total')
+          .eq('is_pass', false)
           .limit(500)
       ]);
 
