@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { AlertTriangle, BarChart3, Brain, Building2, ClipboardCheck, Database, Download, FileText, Filter, GitCompare, ListChecks, Search, Sparkles, Target, TrendingUp, X } from 'lucide-react';
+import { AlertTriangle, BarChart3, Building2, ClipboardCheck, Download, FileText, Filter, ListChecks, RefreshCw, Search, X } from 'lucide-react';
 import { MetricCard } from '../components/MetricCard';
-import { invokeAIGenerateInsights, supabase, useMockData } from '../lib/supabase';
+import { supabase, useMockData } from '../lib/supabase';
 
 const defaultOrg = '10000000-0000-0000-0000-000000000001';
 const emptyOrg = '00000000-0000-0000-0000-000000000001';
@@ -12,105 +12,71 @@ const periodStart = (import.meta.env.VITE_REPORT_PERIOD_START as string | undefi
 const periodEnd = (import.meta.env.VITE_REPORT_PERIOD_END as string | undefined) || '2026-06-22';
 
 type Row = Record<string, any>;
-type TabId = 'overview' | 'locations' | 'checklists' | 'failures' | 'predictive' | 'explanations' | 'actions' | 'benchmarking' | 'raw' | 'lineage';
-
-type Filters = {
-  location: string;
-  checklist: string;
-  severity: string;
-  dateFrom: string;
-  dateTo: string;
-  search: string;
-};
+type TabId = 'dashboard' | 'locations' | 'passfail' | 'failed' | 'sections' | 'planned' | 'urgent' | 'pdf' | 'raw';
+type Filters = { location: string; checklist: string; result: string; dateFrom: string; dateTo: string; search: string };
 
 const tabs: Array<{ id: TabId; label: string }> = [
-  { id: 'overview', label: 'Audit Overview' },
-  { id: 'locations', label: 'Location Risk' },
-  { id: 'checklists', label: 'Checklist Completion' },
-  { id: 'failures', label: 'Audit Failures' },
-  { id: 'predictive', label: 'Predictive Audit Risk' },
-  { id: 'explanations', label: 'Audit Explanations' },
-  { id: 'actions', label: 'Corrective Actions' },
-  { id: 'benchmarking', label: 'Benchmarking' },
-  { id: 'raw', label: 'Raw Audit Data' },
-  { id: 'lineage', label: 'Data Lineage' }
+  { id: 'dashboard', label: 'Dashboard' },
+  { id: 'locations', label: 'Score by Location' },
+  { id: 'passfail', label: 'Pass vs Fail' },
+  { id: 'failed', label: 'Top Failed Items' },
+  { id: 'sections', label: 'Section Failure Rate' },
+  { id: 'planned', label: 'Completed vs Planned' },
+  { id: 'urgent', label: 'Urgent Findings' },
+  { id: 'pdf', label: 'PDF Report Data' },
+  { id: 'raw', label: 'Raw Reports' }
 ];
 
-function safe(value: unknown) {
+function clean(value: unknown) {
   if (value === null || value === undefined || value === '') return '—';
   return String(value).replace(/[^\x20-\x7E]/g, ' ').replace(/\s+/g, ' ').trim();
 }
-
-function num(value: unknown) {
-  if (value === null || value === undefined || Number.isNaN(Number(value))) return '—';
-  return Number(value).toFixed(2).replace(/\.00$/, '');
+function num(value: unknown) { return value === null || value === undefined || Number.isNaN(Number(value)) ? '—' : Number(value).toFixed(2).replace(/\.00$/, ''); }
+function pct(value: unknown) { return value === null || value === undefined || Number.isNaN(Number(value)) ? '—' : `${Number(value).toFixed(2)}%`; }
+function day(value: unknown) { return value ? String(value).slice(0, 10) : '—'; }
+function badge(value: unknown) {
+  const v = String(value ?? '').toLowerCase();
+  if (['critical', 'fail', 'failed'].includes(v)) return 'critical';
+  if (['high'].includes(v)) return 'high';
+  if (['medium'].includes(v)) return 'medium';
+  return 'low';
 }
+function rowLocation(row: Row) { return clean(row.location_name ?? row.location_name_text ?? ''); }
+function rowChecklist(row: Row) { return clean(row.checklist_name ?? ''); }
+function rowResult(row: Row) { return clean(row.final_result ?? row.section_risk_level ?? row.severity ?? ''); }
+function rowDate(row: Row) { return String(row.completed_at ?? row.audit_completed_at ?? row.latest_audit_at ?? row.latest_failure_at ?? row.audit_date ?? row.report_date ?? row.date_range_end ?? '').slice(0, 10); }
 
-function pct(value: unknown) {
-  if (value === null || value === undefined || Number.isNaN(Number(value))) return '—';
-  return `${Number(value).toFixed(2)}%`;
-}
-
-function date(value: unknown) {
-  return value ? String(value).slice(0, 10) : '—';
-}
-
-function severityClass(value: unknown) {
-  const severity = String(value ?? '').toLowerCase();
-  return ['critical', 'high', 'medium', 'low'].includes(severity) ? severity : 'low';
-}
-
-function rowLocation(row: Row) {
-  return safe(row.location_name ?? row.location_name_text ?? row.entity_reference ?? row.company_name ?? '');
-}
-
-function rowChecklist(row: Row) {
-  return safe(row.checklist_name ?? row.checklists_filter ?? '');
-}
-
-function rowSeverity(row: Row) {
-  return safe(row.severity ?? row.risk_level ?? row.predicted_risk_level ?? row.category_risk_level ?? row.section_risk_level ?? row.repeated_issue_level ?? '');
-}
-
-function rowDate(row: Row) {
-  return String(row.completed_at ?? row.audit_completed_at ?? row.finding_at ?? row.report_date ?? row.date_range_end ?? row.date_range_start ?? row.generated_at ?? row.created_at ?? '').slice(0, 10);
-}
-
-function matchesFilters(row: Row, filters: Filters) {
-  const search = filters.search.trim().toLowerCase();
-  const rowDateValue = rowDate(row);
+function matches(row: Row, filters: Filters) {
+  const dateValue = rowDate(row);
   if (filters.location && rowLocation(row).toLowerCase() !== filters.location.toLowerCase()) return false;
   if (filters.checklist && rowChecklist(row).toLowerCase() !== filters.checklist.toLowerCase()) return false;
-  if (filters.severity && rowSeverity(row).toLowerCase() !== filters.severity.toLowerCase()) return false;
-  if (filters.dateFrom && rowDateValue && rowDateValue < filters.dateFrom) return false;
-  if (filters.dateTo && rowDateValue && rowDateValue > filters.dateTo) return false;
-  if (search && !JSON.stringify(row).toLowerCase().includes(search)) return false;
+  if (filters.result && rowResult(row).toLowerCase() !== filters.result.toLowerCase()) return false;
+  if (filters.dateFrom && dateValue && dateValue < filters.dateFrom) return false;
+  if (filters.dateTo && dateValue && dateValue > filters.dateTo) return false;
+  if (filters.search && !JSON.stringify(row).toLowerCase().includes(filters.search.toLowerCase())) return false;
   return true;
 }
+function unique(rows: Row[], getter: (row: Row) => string) { return Array.from(new Set(rows.map(getter).filter((v) => v && v !== '—'))).sort(); }
 
-function uniqueOptions(rows: Row[], getter: (row: Row) => string) {
-  return Array.from(new Set(rows.map(getter).filter((value) => value && value !== '—'))).sort((a, b) => a.localeCompare(b));
+async function fetchRows(name: string, query: any): Promise<{ data: Row[]; error?: string }> {
+  const result = await query;
+  if (result.error) return { data: [], error: `${name}: ${result.error.message}` };
+  return { data: result.data ?? [] };
 }
 
 function makePdf(lines: string[]) {
-  const esc = (text: string) => safe(text).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+  const esc = (text: string) => clean(text).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
   const pages: string[][] = [];
   for (let i = 0; i < lines.length; i += 48) pages.push(lines.slice(i, i + 48));
-  const objects: string[] = [];
-  objects.push('<< /Type /Catalog /Pages 2 0 R >>');
-  objects.push(`<< /Type /Pages /Kids [${pages.map((_, i) => `${4 + i * 2} 0 R`).join(' ')}] /Count ${pages.length} >>`);
-  objects.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  const objects: string[] = ['<< /Type /Catalog /Pages 2 0 R >>', `<< /Type /Pages /Kids [${pages.map((_, i) => `${4 + i * 2} 0 R`).join(' ')}] /Count ${pages.length} >>`, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'];
   pages.forEach((page, i) => {
-    const body = ['BT', '/F1 10 Tf', '14 TL', '48 790 Td', ...page.flatMap((line, index) => [index === 0 && i === 0 ? '/F1 20 Tf' : '/F1 10 Tf', `(${esc(line)}) Tj`, 'T*']), 'ET'].join('\n');
+    const body = ['BT', '/F1 10 Tf', '14 TL', '48 790 Td', ...page.flatMap((line, index) => [index === 0 && i === 0 ? '/F1 18 Tf' : '/F1 10 Tf', `(${esc(line)}) Tj`, 'T*']), 'ET'].join('\n');
     objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents ${5 + i * 2} 0 R >>`);
     objects.push(`<< /Length ${body.length} >>\nstream\n${body}\nendstream`);
   });
   let pdf = '%PDF-1.4\n';
   const offsets = [0];
-  objects.forEach((object, index) => {
-    offsets.push(pdf.length);
-    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
-  });
+  objects.forEach((object, index) => { offsets.push(pdf.length); pdf += `${index + 1} 0 obj\n${object}\nendobj\n`; });
   const xref = pdf.length;
   pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
   offsets.slice(1).forEach((offset) => { pdf += `${String(offset).padStart(10, '0')} 00000 n \n`; });
@@ -118,85 +84,54 @@ function makePdf(lines: string[]) {
   return new Blob([pdf], { type: 'application/pdf' });
 }
 
-async function fetchRows(table: string, query: any): Promise<{ data: Row[]; error?: string }> {
-  const result = await query;
-  if (result.error) return { data: [], error: `${table}: ${result.error.message}` };
-  return { data: result.data ?? [] };
-}
-
 export function AIAnalyticsPage() {
-  const [activeTab, setActiveTab] = useState<TabId>('overview');
-  const [filters, setFilters] = useState<Filters>({ location: '', checklist: '', severity: '', dateFrom: periodStart, dateTo: periodEnd, search: '' });
-  const [clientRows, setClientRows] = useState<Row[]>([]);
-  const [locations, setLocations] = useState<Row[]>([]);
-  const [explanations, setExplanations] = useState<Row[]>([]);
-  const [predictions, setPredictions] = useState<Row[]>([]);
-  const [locationBenchmarks, setLocationBenchmarks] = useState<Row[]>([]);
-  const [categoryBenchmarks, setCategoryBenchmarks] = useState<Row[]>([]);
-  const [sectionBenchmarks, setSectionBenchmarks] = useState<Row[]>([]);
-  const [categories, setCategories] = useState<Row[]>([]);
-  const [sections, setSections] = useState<Row[]>([]);
+  const [activeTab, setActiveTab] = useState<TabId>('dashboard');
+  const [filters, setFilters] = useState<Filters>({ location: '', checklist: '', result: '', dateFrom: periodStart, dateTo: periodEnd, search: '' });
+  const [summary, setSummary] = useState<Row | null>(null);
+  const [locationScores, setLocationScores] = useState<Row[]>([]);
+  const [passFail, setPassFail] = useState<Row[]>([]);
   const [failedItems, setFailedItems] = useState<Row[]>([]);
-  const [repeatedIssues, setRepeatedIssues] = useState<Row[]>([]);
-  const [actions, setActions] = useState<Row[]>([]);
+  const [sectionRates, setSectionRates] = useState<Row[]>([]);
+  const [completedVsPlanned, setCompletedVsPlanned] = useState<Row[]>([]);
+  const [urgentFindings, setUrgentFindings] = useState<Row[]>([]);
+  const [pdfRows, setPdfRows] = useState<Row[]>([]);
   const [rawAudits, setRawAudits] = useState<Row[]>([]);
   const [rawCompletions, setRawCompletions] = useState<Row[]>([]);
-  const [rawCompletionChecklists, setRawCompletionChecklists] = useState<Row[]>([]);
-  const [lineage, setLineage] = useState<Row[]>([]);
-  const [runs, setRuns] = useState<Row[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [running, setRunning] = useState(false);
 
   async function load() {
     const db = supabase;
     if (useMockData || !db) return;
     setLoading(true);
-    const errors: string[] = [];
     try {
       const results = await Promise.all([
-        fetchRows('v_client_company_dashboard', db.from('v_client_company_dashboard').select('*').eq('organization_id', organizationId).limit(20)),
-        fetchRows('v_advanced_report_location_analytics', db.from('v_advanced_report_location_analytics').select('*').eq('organization_id', organizationId).order('risk_score', { ascending: false }).limit(200)),
-        fetchRows('v_ml_explanation_driver_breakdown', db.from('v_ml_explanation_driver_breakdown').select('*').eq('organization_id', organizationId).order('impact_points', { ascending: false }).limit(500)),
-        fetchRows('v_predictive_location_risk', db.from('v_predictive_location_risk').select('*').eq('organization_id', organizationId).order('predicted_next_risk_score', { ascending: false }).limit(200)),
-        fetchRows('v_location_benchmarking', db.from('v_location_benchmarking').select('*').eq('organization_id', organizationId).order('risk_rank_high_to_low', { ascending: true }).limit(200)),
-        fetchRows('v_category_benchmarking', db.from('v_category_benchmarking').select('*').eq('organization_id', organizationId).order('category_failure_rank', { ascending: true }).limit(200)),
-        fetchRows('v_section_benchmarking', db.from('v_section_benchmarking').select('*').eq('organization_id', organizationId).order('weakest_section_rank', { ascending: true }).limit(200)),
-        fetchRows('v_advanced_report_category_analytics', db.from('v_advanced_report_category_analytics').select('*').eq('organization_id', organizationId).order('failed_item_count', { ascending: false }).limit(200)),
-        fetchRows('v_advanced_report_section_analytics', db.from('v_advanced_report_section_analytics').select('*').eq('organization_id', organizationId).order('avg_section_score_pct', { ascending: true }).limit(200)),
-        fetchRows('v_advanced_report_failed_items', db.from('v_advanced_report_failed_items').select('*').eq('organization_id', organizationId).order('is_critical', { ascending: false }).order('completed_at', { ascending: false }).limit(500)),
-        fetchRows('v_advanced_report_repeated_issues', db.from('v_advanced_report_repeated_issues').select('*').eq('organization_id', organizationId).order('repeat_count', { ascending: false }).limit(200)),
-        fetchRows('v_advanced_report_action_plan', db.from('v_advanced_report_action_plan').select('*').eq('organization_id', organizationId).order('priority_rank', { ascending: true }).limit(500)),
-        fetchRows('audit_reports', db.from('audit_reports').select('audit_report_id,client_name,group_modes,checklist_name,location_name_text,report_date,date_range_start,date_range_end,score_percentage,instance_status,completed_at,submitted_by_name,source_file_name').eq('organization_id', organizationId).order('completed_at', { ascending: false }).limit(200)),
-        fetchRows('completion_rate_reports', db.from('completion_rate_reports').select('completion_report_id,client_name,group_modes,location_name_text,date_range_start,date_range_end,lists_completed_pct,lists_missed_pct,items_completed_pct,items_missed_pct,source_file_name').eq('organization_id', organizationId).order('date_range_end', { ascending: false }).limit(200)),
-        fetchRows('completion_rate_checklists', db.from('completion_rate_checklists').select('completion_checklist_id,checklist_name,done_on_time_count,done_on_time_pct,done_late_count,done_late_pct,partially_done_count,partially_done_pct,missed_count,missed_pct,created_at').eq('organization_id', organizationId).order('missed_pct', { ascending: false }).limit(500)),
-        fetchRows('v_analytics_data_lineage', db.from('v_analytics_data_lineage').select('*').eq('organization_id', organizationId).order('sort_order', { ascending: true })),
-        fetchRows('analytics_generation_runs', db.from('analytics_generation_runs').select('*').eq('organization_id', organizationId).order('started_at', { ascending: false }).limit(30))
+        fetchRows('v_audit_dashboard_summary', db.from('v_audit_dashboard_summary').select('*').eq('organization_id', organizationId).limit(1)),
+        fetchRows('v_audit_dashboard_score_by_location', db.from('v_audit_dashboard_score_by_location').select('*').eq('organization_id', organizationId).order('average_audit_score', { ascending: true }).limit(200)),
+        fetchRows('v_audit_dashboard_pass_fail_rate', db.from('v_audit_dashboard_pass_fail_rate').select('*').eq('organization_id', organizationId).order('audit_date', { ascending: false }).limit(200)),
+        fetchRows('v_audit_dashboard_top_failed_items', db.from('v_audit_dashboard_top_failed_items').select('*').eq('organization_id', organizationId).order('failure_count', { ascending: false }).limit(300)),
+        fetchRows('v_audit_dashboard_failure_rate_by_section', db.from('v_audit_dashboard_failure_rate_by_section').select('*').eq('organization_id', organizationId).order('critical_failed_item_count', { ascending: false }).limit(300)),
+        fetchRows('v_audit_dashboard_completed_vs_planned', db.from('v_audit_dashboard_completed_vs_planned').select('*').eq('organization_id', organizationId).order('missed_count', { ascending: false }).limit(300)),
+        fetchRows('v_audit_pdf_urgent_findings', db.from('v_audit_pdf_urgent_findings').select('*').eq('organization_id', organizationId).order('completed_at', { ascending: false }).limit(300)),
+        fetchRows('v_audit_pdf_report_data', db.from('v_audit_pdf_report_data').select('*').eq('organization_id', organizationId).order('completed_at', { ascending: false }).limit(100)),
+        fetchRows('audit_reports', db.from('audit_reports').select('audit_report_id,client_name,group_modes,checklist_name,location_name_text,report_date,score_percentage,instance_status,completed_at,submitted_by_name,source_file_name').eq('organization_id', organizationId).order('completed_at', { ascending: false }).limit(200)),
+        fetchRows('completion_rate_reports', db.from('completion_rate_reports').select('completion_report_id,client_name,group_modes,location_name_text,date_range_start,date_range_end,lists_completed_pct,lists_missed_pct,items_completed_pct,items_missed_pct,source_file_name').eq('organization_id', organizationId).order('date_range_end', { ascending: false }).limit(200))
       ]);
-
-      results.forEach((result) => { if (result.error) errors.push(result.error); });
-      setClientRows(results[0].data);
-      setLocations(results[1].data);
-      setExplanations(results[2].data);
-      setPredictions(results[3].data);
-      setLocationBenchmarks(results[4].data);
-      setCategoryBenchmarks(results[5].data);
-      setSectionBenchmarks(results[6].data);
-      setCategories(results[7].data);
-      setSections(results[8].data);
-      setFailedItems(results[9].data);
-      setRepeatedIssues(results[10].data);
-      setActions(results[11].data);
-      setRawAudits(results[12].data);
-      setRawCompletions(results[13].data);
-      setRawCompletionChecklists(results[14].data);
-      setLineage(results[15].data);
-      setRuns(results[16].data);
-      setWarnings(errors);
+      setWarnings(results.flatMap((r) => r.error ? [r.error] : []));
+      setSummary(results[0].data[0] ?? null);
+      setLocationScores(results[1].data);
+      setPassFail(results[2].data);
+      setFailedItems(results[3].data);
+      setSectionRates(results[4].data);
+      setCompletedVsPlanned(results[5].data);
+      setUrgentFindings(results[6].data);
+      setPdfRows(results[7].data);
+      setRawAudits(results[8].data);
+      setRawCompletions(results[9].data);
       setMessage(null);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Failed to load audit advanced report data.');
+      setMessage(error instanceof Error ? error.message : 'Failed to load Audit Advanced Report dashboard.');
     } finally {
       setLoading(false);
     }
@@ -204,106 +139,57 @@ export function AIAnalyticsPage() {
 
   useEffect(() => { void load(); }, []);
 
-  async function runAuditReportEngine() {
-    const db = supabase;
-    if (!db) return;
-    setRunning(true);
-    setMessage(null);
-    try {
-      try {
-        await invokeAIGenerateInsights({ organization_id: organizationId, period_start: filters.dateFrom || periodStart, period_end: filters.dateTo || periodEnd, run_type: 'audit_advanced_report' });
-        setMessage('Audit Advanced Report engine completed through Edge Function. Refreshing dashboard...');
-        await load();
-        return;
-      } catch {
-        // Fallback to direct RPC if the Edge Function is not deployed yet.
-      }
-      const attempts = [
-        () => db.rpc('run_ai_engine_v2', { p_organization_id: organizationId, p_period_start: filters.dateFrom || periodStart, p_period_end: filters.dateTo || periodEnd, p_triggered_by: 'frontend:AuditAdvancedReport' }),
-        () => db.rpc('run_ai_analytics_engine_v1', { p_organization_id: organizationId, p_period_start: filters.dateFrom || periodStart, p_period_end: filters.dateTo || periodEnd, p_triggered_by: 'frontend:AuditAdvancedReport' }),
-        () => db.rpc('run_advanced_report_ml_v3', { p_organization_id: organizationId, p_period_start: filters.dateFrom || periodStart, p_period_end: filters.dateTo || periodEnd, p_triggered_by: 'frontend:AuditAdvancedReport' })
-      ];
-      let lastError = '';
-      for (const attempt of attempts) {
-        const { data, error } = await attempt();
-        if (!error) {
-          const row = Array.isArray(data) && data.length ? data[0] : {};
-          setMessage(`Audit Advanced Report engine completed. Raw rows: ${row.raw_rows_scanned ?? '—'}. Refreshing dashboard...`);
-          await load();
-          return;
-        }
-        lastError = error.message;
-      }
-      throw new Error(lastError || 'No audit report engine function succeeded.');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Audit Advanced Report engine failed.');
-    } finally {
-      setRunning(false);
-    }
-  }
+  const allRows = [...locationScores, ...passFail, ...failedItems, ...sectionRates, ...completedVsPlanned, ...urgentFindings, ...pdfRows, ...rawAudits, ...rawCompletions];
+  const options = {
+    locations: unique(allRows, rowLocation),
+    checklists: unique(allRows, rowChecklist),
+    results: unique(allRows, rowResult).filter((v) => ['Pass', 'Fail', 'critical', 'high', 'medium', 'low'].includes(v))
+  };
+  const filterRows = (rows: Row[]) => rows.filter((row) => matches(row, filters));
+  const filtered = {
+    locations: filterRows(locationScores),
+    passFail: filterRows(passFail),
+    failedItems: filterRows(failedItems),
+    sectionRates: filterRows(sectionRates),
+    completedVsPlanned: filterRows(completedVsPlanned),
+    urgentFindings: filterRows(urgentFindings),
+    pdfRows: filterRows(pdfRows),
+    rawAudits: filterRows(rawAudits),
+    rawCompletions: filterRows(rawCompletions)
+  };
 
-  const allRowsForFilters = [...locations, ...predictions, ...failedItems, ...actions, ...sections, ...rawAudits, ...rawCompletionChecklists];
-  const locationOptions = uniqueOptions(allRowsForFilters, rowLocation);
-  const checklistOptions = uniqueOptions(allRowsForFilters, rowChecklist);
-  const severityOptions = uniqueOptions(allRowsForFilters, rowSeverity).filter((value) => ['critical', 'high', 'medium', 'low'].includes(value.toLowerCase()));
-  const filterRows = (rows: Row[]) => rows.filter((row) => matchesFilters(row, filters));
+  const averageScore = summary?.average_audit_score ?? (filtered.locations.length ? filtered.locations.reduce((sum, row) => sum + Number(row.average_audit_score ?? 0), 0) / filtered.locations.length : null);
+  const failCount = summary?.fail_count ?? filtered.pdfRows.filter((row) => row.final_result === 'Fail').length;
+  const urgentCount = filtered.urgentFindings.length || summary?.critical_failed_item_count || 0;
+  const weakestLocation = filtered.locations[0];
+  const topFailed = filtered.failedItems[0];
 
-  const filteredLocations = filterRows(locations);
-  const filteredPredictions = filterRows(predictions);
-  const filteredExplanations = filterRows(explanations);
-  const filteredFailedItems = filterRows(failedItems);
-  const filteredActions = filterRows(actions);
-  const filteredCategories = filterRows(categories);
-  const filteredSections = filterRows(sections);
-  const filteredRepeatedIssues = filterRows(repeatedIssues);
-  const filteredLocationBenchmarks = filterRows(locationBenchmarks);
-  const filteredCategoryBenchmarks = filterRows(categoryBenchmarks);
-  const filteredSectionBenchmarks = filterRows(sectionBenchmarks);
-  const filteredRawAudits = filterRows(rawAudits);
-  const filteredRawCompletions = filterRows(rawCompletions);
-  const filteredRawChecklists = filterRows(rawCompletionChecklists);
-
-  const summary = clientRows[0];
-  const topLocation = filteredLocations[0] ?? locations[0];
-  const topPrediction = filteredPredictions[0] ?? predictions[0];
-  const topDriver = filteredExplanations[0] ?? explanations[0];
-  const lastRun = runs[0];
-  const avgRisk = filteredLocations.length ? filteredLocations.reduce((sum, row) => sum + Number(row.risk_score ?? row.calculated_risk_score ?? 0), 0) / filteredLocations.length : summary?.avg_risk_score;
-  const avgHealth = avgRisk === undefined || avgRisk === null ? summary?.avg_health_score : 100 - Number(avgRisk);
-  const totalFailed = filteredLocations.reduce((sum, row) => sum + Number(row.failed_item_count ?? 0), 0) || summary?.total_failed_items || 0;
-  const totalCritical = filteredLocations.reduce((sum, row) => sum + Number(row.critical_failed_item_count ?? 0), 0) || summary?.total_critical_failures || 0;
-  const auditReportCount = filteredRawAudits.length || summary?.audit_report_count || 0;
-  const completionReportCount = filteredRawCompletions.length || summary?.completion_report_count || 0;
-
-  const showBlockingWarning = Boolean(warnings.length && !locations.length && !rawAudits.length && !rawCompletions.length);
-
-  const updateFilter = (key: keyof Filters, value: string) => setFilters((current) => ({ ...current, [key]: value }));
-  const resetFilters = () => setFilters({ location: '', checklist: '', severity: '', dateFrom: periodStart, dateTo: periodEnd, search: '' });
-
-  const pdfLines = useMemo(() => [
+  const reportLines = useMemo(() => [
     'InCheck360 Audit Advanced Report',
-    `Organization: ${organizationId}`,
     `Period: ${filters.dateFrom || periodStart} to ${filters.dateTo || periodEnd}`,
-    `Filters: location=${filters.location || 'all'} checklist=${filters.checklist || 'all'} severity=${filters.severity || 'all'}`,
+    `Filters: Location=${filters.location || 'All'} | Checklist=${filters.checklist || 'All'} | Result=${filters.result || 'All'}`,
     '',
-    'AUDIT SUMMARY',
-    `Audit reports: ${auditReportCount} | Completion reports: ${completionReportCount}`,
-    `Average risk: ${num(avgRisk)}/100 | Average health: ${num(avgHealth)}/100`,
-    `Failed items: ${totalFailed} | Critical failures: ${totalCritical}`,
+    'SUMMARY',
+    `Audit count: ${clean(summary?.audit_count ?? filtered.pdfRows.length)}`,
+    `Average audit score: ${num(averageScore)}%`,
+    `Pass rate: ${pct(summary?.pass_rate_pct)} | Fail rate: ${pct(summary?.fail_rate_pct)}`,
+    `Failed items: ${clean(summary?.failed_item_count ?? filtered.failedItems.length)} | Urgent findings: ${urgentCount}`,
     '',
-    'PREDICTIVE AUDIT RISK',
-    ...filteredPredictions.slice(0, 25).map((row, index) => `${index + 1}. ${safe(row.location_name)} - current ${safe(row.current_risk_score)}/100, predicted ${safe(row.predicted_next_risk_score)}/100 (${safe(row.predicted_risk_level)})`),
+    'URGENT FINDINGS',
+    ...filtered.urgentFindings.slice(0, 25).map((row, index) => `${index + 1}. [${clean(row.severity)}] ${clean(row.location_name)} / ${clean(row.checklist_name)} / ${clean(row.section_name)} - ${clean(row.item_text)}. Action: ${clean(row.recommended_action)}`),
     '',
-    'CORRECTIVE ACTIONS',
-    ...filteredActions.slice(0, 35).map((row, index) => `${index + 1}. [${safe(row.severity)}] ${safe(row.location_name)} - ${safe(row.action_title)}. ${safe(row.recommended_action)}`)
-  ], [filters, auditReportCount, completionReportCount, avgRisk, avgHealth, totalFailed, totalCritical, filteredPredictions, filteredActions]);
+    'TOP FAILED ITEMS',
+    ...filtered.failedItems.slice(0, 25).map((row, index) => `${index + 1}. ${clean(row.item_text)} - ${clean(row.failure_count)} failures (${clean(row.section_name)})`)
+  ], [filters, summary, filtered.pdfRows.length, filtered.failedItems, filtered.urgentFindings, averageScore, urgentCount]);
 
-  function downloadPdf() {
-    const blob = makePdf(pdfLines);
+  function updateFilter(key: keyof Filters, value: string) { setFilters((current) => ({ ...current, [key]: value })); }
+  function resetFilters() { setFilters({ location: '', checklist: '', result: '', dateFrom: periodStart, dateTo: periodEnd, search: '' }); }
+  function exportPdf() {
+    const blob = makePdf(reportLines);
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `audit-advanced-report-${organizationId}-${filters.dateFrom || periodStart}-${filters.dateTo || periodEnd}.pdf`;
+    link.download = `audit-advanced-report-${filters.dateFrom}-${filters.dateTo}.pdf`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -315,65 +201,59 @@ export function AIAnalyticsPage() {
       <section className="hero-card">
         <div>
           <p className="eyebrow">Audit Advanced Report</p>
-          <h2>Advanced audit analytics from imported audit and completion reports.</h2>
-          <p>This module is focused on audit reports only: location risk, checklist completion, failed items, abnormal audit patterns, predicted audit risk, and corrective actions.</p>
+          <h2>Dashboard and pen-and-paper style audit report output.</h2>
+          <p>Configuration is managed in InCheck. This page only reads completed auditing checklists and shows the dashboard, report data, urgent findings, and PDF export.</p>
         </div>
-        <button className="primary-button" onClick={runAuditReportEngine} disabled={running}><Sparkles size={17} /> {running ? 'Analyzing audits...' : 'Run Audit Report Engine'}</button>
+        <button className="primary-button" onClick={exportPdf}><Download size={17} /> Export Audit PDF</button>
       </section>
 
       {message && <section className="notice-card">{message}</section>}
-      {loading && <section className="notice-card">Loading Audit Advanced Report...</section>}
-      {showBlockingWarning && <section className="notice-card">Audit views are not ready yet. First warning: {warnings[0]}</section>}
+      {loading && <section className="notice-card">Loading Audit Advanced Report dashboard...</section>}
+      {!!warnings.length && !summary && <section className="notice-card">Run the Audit Advanced Report dashboard SQL first. First warning: {warnings[0]}</section>}
 
       <section className="metric-grid three">
-        <MetricCard title="Audit reports" value={auditReportCount} hint={`${completionReportCount} completion reports`} icon={<ClipboardCheck />} tone="success" />
-        <MetricCard title="Average audit risk" value={avgRisk === null || avgRisk === undefined ? '—' : `${num(avgRisk)}/100`} hint="Filtered audit risk" icon={<Brain />} tone="warning" />
-        <MetricCard title="Critical audit failures" value={totalCritical} hint={`${safe(totalFailed)} total failed audit items`} icon={<AlertTriangle />} tone="danger" />
+        <MetricCard title="Audit count" value={summary?.audit_count ?? filtered.pdfRows.length} hint={`${summary?.location_count ?? options.locations.length} locations`} icon={<ClipboardCheck />} tone="success" />
+        <MetricCard title="Average audit score" value={averageScore === null || averageScore === undefined ? '—' : `${num(averageScore)}%`} hint="Final score from audit report data" icon={<BarChart3 />} tone="warning" />
+        <MetricCard title="Urgent findings" value={urgentCount} hint={`${summary?.failed_item_count ?? filtered.failedItems.length} total failed items`} icon={<AlertTriangle />} tone="danger" />
       </section>
       <section className="metric-grid three">
-        <MetricCard title="Top risk location" value={topLocation?.location_name ?? topLocation?.location_name_text ?? '—'} hint={`${num(topLocation?.risk_score ?? topLocation?.calculated_risk_score)}/100 risk`} icon={<Building2 />} tone="danger" />
-        <MetricCard title="Predicted audit risk" value={topPrediction?.location_name ?? '—'} hint={`${num(topPrediction?.predicted_next_risk_score)}/100 predicted`} icon={<TrendingUp />} tone="warning" />
-        <MetricCard title="Last audit engine run" value={lastRun?.status ?? '—'} hint={lastRun?.calculation_run_id ?? 'No run'} icon={<Database />} tone="success" />
+        <MetricCard title="Fail count" value={failCount ?? 0} hint={`Fail rate ${pct(summary?.fail_rate_pct)}`} icon={<FileText />} tone="danger" />
+        <MetricCard title="Weakest location" value={weakestLocation?.location_name ?? '—'} hint={`Avg score ${pct(weakestLocation?.average_audit_score)}`} icon={<Building2 />} tone="warning" />
+        <MetricCard title="Top failed item" value={topFailed?.item_text ?? '—'} hint={`${topFailed?.failure_count ?? 0} failures`} icon={<ListChecks />} tone="danger" />
       </section>
 
-      <section className="toolbar-card">
-        <div className="section-header"><div><p className="eyebrow">Audit Filters</p><h2>Filter by location, checklist, severity, and date</h2></div><Filter size={20} /></div>
+      <section className="toolbar-card audit-filter-card">
+        <div className="section-header"><div><p className="eyebrow">Dashboard filters</p><h2>Filter audit report data</h2></div><Filter size={20} /></div>
         <div className="filters-grid">
-          <label>Location<select value={filters.location} onChange={(event) => updateFilter('location', event.target.value)}><option value="">All locations</option>{locationOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
-          <label>Checklist<select value={filters.checklist} onChange={(event) => updateFilter('checklist', event.target.value)}><option value="">All checklists</option>{checklistOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
-          <label>Severity<select value={filters.severity} onChange={(event) => updateFilter('severity', event.target.value)}><option value="">All severities</option>{severityOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
-          <label>From<input type="date" value={filters.dateFrom} onChange={(event) => updateFilter('dateFrom', event.target.value)} /></label>
-          <label>To<input type="date" value={filters.dateTo} onChange={(event) => updateFilter('dateTo', event.target.value)} /></label>
-          <label>Search<div className="search-box"><Search size={18} /><input value={filters.search} onChange={(event) => updateFilter('search', event.target.value)} placeholder="Search audit data..." /></div></label>
+          <label>Location<select value={filters.location} onChange={(e) => updateFilter('location', e.target.value)}><option value="">All locations</option>{options.locations.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+          <label>Checklist<select value={filters.checklist} onChange={(e) => updateFilter('checklist', e.target.value)}><option value="">All checklists</option>{options.checklists.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+          <label>Result / Risk<select value={filters.result} onChange={(e) => updateFilter('result', e.target.value)}><option value="">All</option>{options.results.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+          <label>From<input type="date" value={filters.dateFrom} onChange={(e) => updateFilter('dateFrom', e.target.value)} /></label>
+          <label>To<input type="date" value={filters.dateTo} onChange={(e) => updateFilter('dateTo', e.target.value)} /></label>
+          <label>Search<div className="search-box"><Search size={18} /><input value={filters.search} onChange={(e) => updateFilter('search', e.target.value)} placeholder="Search audit report..." /></div></label>
         </div>
-        <div className="row gap-sm wrap"><button className="secondary-button" onClick={resetFilters}><X size={16} /> Reset filters</button><button className="secondary-button" onClick={downloadPdf}><Download size={16} /> Export audit PDF</button></div>
+        <div className="row gap-sm wrap"><button className="secondary-button" onClick={resetFilters}><X size={16} /> Reset filters</button><button className="secondary-button" onClick={load}><RefreshCw size={16} /> Refresh</button><button className="secondary-button" onClick={exportPdf}><Download size={16} /> Export PDF</button></div>
       </section>
 
       <section className="toolbar-card"><div className="row gap-sm wrap">{tabs.map((tab) => <button key={tab.id} className={`filter-button ${activeTab === tab.id ? 'active' : ''}`} onClick={() => setActiveTab(tab.id)}>{tab.label}</button>)}</div></section>
 
-      {activeTab === 'overview' && <Overview topLocation={topLocation} topPrediction={topPrediction} topDriver={topDriver} actions={filteredActions} />}
-      {activeTab === 'locations' && <DataTable rows={filteredLocations} empty="No location audit risk rows found." columns={[["Location", (r) => <><strong>{r.location_name ?? '—'}</strong><span>{r.audit_report_count ?? 0} audit / {r.completion_report_count ?? 0} completion</span></>], ["Risk", (r) => <><span className={`severity-badge ${severityClass(r.risk_level ?? r.predicted_risk_level)}`}>{r.risk_level ?? r.predicted_risk_level ?? '—'}</span><strong>{num(r.risk_score ?? r.calculated_risk_score)}/100</strong></>], ["Health", (r) => `${num(r.health_score)}/100`], ["Audit score", (r) => pct(r.avg_audit_score_pct ?? r.avg_audit_score_percentage)], ["Failed", (r) => `${r.failed_item_count ?? 0} (${r.critical_failed_item_count ?? 0} critical)`], ["Checklist missed", (r) => `Lists ${pct(r.avg_lists_missed_pct)} / Items ${pct(r.avg_items_missed_pct)}`], ["Confidence", (r) => pct(Number(r.confidence ?? 0) * 100)]]} />}
-      {activeTab === 'checklists' && <DataTable rows={filteredRawChecklists} empty="No checklist completion rows found." columns={[["Checklist", (r) => <strong>{r.checklist_name}</strong>], ["Done on time", (r) => `${r.done_on_time_count} (${pct(r.done_on_time_pct)})`], ["Done late", (r) => `${r.done_late_count} (${pct(r.done_late_pct)})`], ["Partially", (r) => `${r.partially_done_count} (${pct(r.partially_done_pct)})`], ["Missed", (r) => <strong>{r.missed_count} ({pct(r.missed_pct)})</strong>]]} />}
-      {activeTab === 'failures' && <DataTable rows={filteredFailedItems} empty="No failed audit items found." columns={[["Failed audit item", (r) => <><strong>{r.item_text}</strong><span>{r.section_name} · {r.location_name}</span></>], ["Checklist", (r) => r.checklist_name ?? '—'], ["Severity", (r) => <span className={`severity-badge ${severityClass(r.severity)}`}>{r.severity ?? '—'}</span>], ["Category", (r) => r.risk_category ?? 'general'], ["Result", (r) => r.result_value ?? '—'], ["Comment", (r) => r.comment_text ?? '—'], ["Recommended action", (r) => r.recommended_action ?? '—']]} />}
-      {activeTab === 'predictive' && <DataTable rows={filteredPredictions} empty="No predictive audit risk rows found." columns={[["Location", (r) => <><strong>{r.location_name ?? '—'}</strong><span>{r.trend_direction ?? 'stable'}</span></>], ["Current", (r) => `${num(r.current_risk_score)}/100`], ["Predicted", (r) => <><span className={`severity-badge ${severityClass(r.predicted_risk_level)}`}>{r.predicted_risk_level ?? '—'}</span><strong>{num(r.predicted_next_risk_score)}/100</strong></>], ["Audit forecast", (r) => pct(r.predicted_next_audit_score)], ["Delta", (r) => num(r.risk_delta)], ["Visit", (r) => r.recommended_visit_window ?? '—'], ["Reason", (r) => r.prediction_reason ?? '—']]} />}
-      {activeTab === 'explanations' && <DataTable rows={filteredExplanations} empty="No audit explanations found." columns={[["Location", (r) => <><strong>{r.location_name ?? '—'}</strong><span>Risk {num(r.risk_score)}/100</span></>], ["Audit driver", (r) => <><strong>{r.driver_label}</strong><span>{r.driver_group}</span></>], ["Actual", (r) => num(r.actual_value)], ["Impact", (r) => <strong>{num(r.impact_points)} pts</strong>], ["Rank", (r) => `#${r.driver_rank ?? '—'}`], ["Explanation", (r) => r.explanation ?? '—']]} />}
-      {activeTab === 'actions' && <DataTable rows={filteredActions} empty="No audit corrective actions found." columns={[["Corrective action", (r) => <><strong>{r.action_title}</strong><span>{r.action_reference} · {r.location_name}</span></>], ["Checklist", (r) => r.checklist_name ?? '—'], ["Priority", (r) => <span className={`severity-badge ${severityClass(r.severity)}`}>{r.severity ?? '—'}</span>], ["Category", (r) => r.risk_category ?? 'general'], ["Section", (r) => r.section_name ?? '—'], ["Recommendation", (r) => r.recommended_action ?? '—'], ["Due", (r) => date(r.suggested_due_at)]]} />}
-      {activeTab === 'benchmarking' && <div className="page-stack"><DataTable rows={filteredLocationBenchmarks} empty="No location benchmark rows found." columns={[["Location", (r) => <><strong>{r.location_name ?? '—'}</strong><span>Risk rank #{r.risk_rank_high_to_low ?? '—'}</span></>], ["Risk", (r) => `${num(r.risk_score)}/100`], ["Company avg", (r) => `${num(r.company_avg_risk_score)}/100`], ["Vs avg", (r) => num(r.risk_vs_company_avg)], ["Percentile", (r) => pct(r.risk_percentile)], ["Health rank", (r) => `#${r.health_rank_best_to_worst ?? '—'}`]]} /><DataTable rows={filteredCategoryBenchmarks} empty="No category benchmark rows found." columns={[["Category", (r) => <strong>{r.risk_category ?? 'general'}</strong>], ["Rank", (r) => `#${r.category_failure_rank ?? '—'}`], ["Failed", (r) => r.total_failed_items ?? 0], ["Critical", (r) => r.total_critical_failed_items ?? 0], ["Locations", (r) => r.affected_location_count ?? 0], ["Avg score", (r) => pct(r.avg_item_score_pct)]]} /><DataTable rows={filteredSectionBenchmarks} empty="No section benchmark rows found." columns={[["Section", (r) => <strong>{r.section_name ?? '—'}</strong>], ["Weak rank", (r) => `#${r.weakest_section_rank ?? '—'}`], ["Avg score", (r) => pct(r.avg_section_score_pct)], ["Min score", (r) => pct(r.min_section_score_pct)], ["Failed", (r) => r.failed_item_count ?? 0], ["Critical", (r) => r.critical_failed_item_count ?? 0], ["Locations", (r) => r.affected_location_count ?? 0]]} /></div>}
-      {activeTab === 'raw' && <div className="page-stack"><DataTable rows={filteredRawAudits} empty="No raw audit reports found." columns={[["Audit report", (r) => <><strong>{r.checklist_name}</strong><span>{r.source_file_name}</span></>], ["Location", (r) => r.location_name_text], ["Client", (r) => r.client_name], ["Date", (r) => date(r.completed_at ?? r.report_date)], ["Status", (r) => r.instance_status], ["Score", (r) => pct(r.score_percentage)], ["Submitted by", (r) => r.submitted_by_name ?? '—']]} /><DataTable rows={filteredRawCompletions} empty="No raw completion reports found." columns={[["Completion report", (r) => <><strong>{r.location_name_text}</strong><span>{r.source_file_name}</span></>], ["Client", (r) => r.client_name], ["Period", (r) => `${date(r.date_range_start)} → ${date(r.date_range_end)}`], ["Lists completed", (r) => pct(r.lists_completed_pct)], ["Lists missed", (r) => pct(r.lists_missed_pct)], ["Items completed", (r) => pct(r.items_completed_pct)], ["Items missed", (r) => pct(r.items_missed_pct)]]} /></div>}
-      {activeTab === 'lineage' && <div className="page-stack"><DataTable rows={filterRows(lineage)} empty="No lineage rows found." columns={[["Layer", (r) => <strong>{r.layer}</strong>], ["Table", (r) => r.table_name], ["Rows", (r) => r.row_count], ["Source", (r) => r.source_type], ["Generated by", (r) => r.generated_by ?? 'not generated'], ["Model", (r) => r.model_version ?? '—'], ["Run ID", (r) => r.calculation_run_id ?? '—'], ["Activity", (r) => date(r.last_activity_at)]]} /><DataTable rows={runs} empty="No generation run logs yet." columns={[["Status", (r) => <span className={`severity-badge ${r.status === 'failed' ? 'critical' : r.status === 'completed' ? 'low' : 'medium'}`}>{r.status}</span>], ["Run ID", (r) => r.calculation_run_id], ["Period", (r) => `${date(r.period_start)} → ${date(r.period_end)}`], ["Raw rows", (r) => r.raw_rows_scanned], ["Features", (r) => r.generated_feature_rows], ["Insights", (r) => r.generated_insight_rows], ["Triggered by", (r) => r.triggered_by ?? '—'], ["Started", (r) => date(r.started_at)]]} /></div>}
+      {activeTab === 'dashboard' && <DashboardCards weakestLocation={weakestLocation} topFailed={topFailed} urgentFindings={filtered.urgentFindings} />}
+      {activeTab === 'locations' && <DataTable rows={filtered.locations} empty="No score by location rows." columns={[["Location", (r) => <><strong>{r.location_name}</strong><span>{r.audit_count} audits</span></>], ["Average score", (r) => pct(r.average_audit_score)], ["Lowest score", (r) => pct(r.lowest_audit_score)], ["Pass", (r) => r.pass_count], ["Fail", (r) => r.fail_count], ["Fail rate", (r) => pct(r.fail_rate_pct)], ["Critical", (r) => r.critical_failed_item_count]]} />}
+      {activeTab === 'passfail' && <DataTable rows={filtered.passFail} empty="No pass/fail trend rows." columns={[["Date", (r) => day(r.audit_date)], ["Checklist", (r) => r.checklist_name], ["Audits", (r) => r.audit_count], ["Pass", (r) => r.pass_count], ["Fail", (r) => r.fail_count], ["Pass rate", (r) => pct(r.pass_rate_pct)], ["Fail rate", (r) => pct(r.fail_rate_pct)]]} />}
+      {activeTab === 'failed' && <DataTable rows={filtered.failedItems} empty="No failed audit items." columns={[["Failed item", (r) => <><strong>{r.item_text}</strong><span>{r.section_name} · {r.location_name}</span></>], ["Checklist", (r) => r.checklist_name], ["Severity", (r) => <span className={`severity-badge ${badge(r.severity)}`}>{r.severity}</span>], ["Category", (r) => r.risk_category], ["Failures", (r) => r.failure_count], ["Affected audits", (r) => r.affected_audit_count], ["Action", (r) => r.recommended_action]]} />}
+      {activeTab === 'sections' && <DataTable rows={filtered.sectionRates} empty="No section failure rows." columns={[["Section", (r) => <><strong>{r.section_name}</strong><span>{r.checklist_name} · {r.location_name}</span></>], ["Risk", (r) => <span className={`severity-badge ${badge(r.section_risk_level)}`}>{r.section_risk_level}</span>], ["Avg score", (r) => pct(r.average_section_score)], ["Failed", (r) => r.failed_item_count], ["Critical", (r) => r.critical_failed_item_count]]} />}
+      {activeTab === 'planned' && <DataTable rows={filtered.completedVsPlanned} empty="No completed vs planned rows." columns={[["Checklist", (r) => <strong>{r.checklist_name}</strong>], ["Completed", (r) => r.completed_count], ["Planned", (r) => r.planned_count], ["Missed", (r) => r.missed_count], ["Completion rate", (r) => pct(r.completion_rate_pct)]]} />}
+      {activeTab === 'urgent' && <DataTable rows={filtered.urgentFindings} empty="No urgent findings." columns={[["Urgent finding", (r) => <><strong>{r.item_text}</strong><span>{r.section_name} · {r.location_name}</span></>], ["Checklist", (r) => r.checklist_name], ["Severity", (r) => <span className={`severity-badge ${badge(r.severity)}`}>{r.severity}</span>], ["Result", (r) => r.result_value], ["Comment", (r) => r.comment_text], ["Action", (r) => r.recommended_action]]} />}
+      {activeTab === 'pdf' && <DataTable rows={filtered.pdfRows} empty="No PDF report data." columns={[["Audit", (r) => <><strong>{r.checklist_name}</strong><span>{r.location_name}</span></>], ["Auditor", (r) => r.auditor_name], ["Score", (r) => pct(r.final_score)], ["Result", (r) => <span className={`severity-badge ${badge(r.final_result)}`}>{r.final_result}</span>], ["Reason", (r) => r.final_result_reason], ["Urgent", (r) => r.urgent_findings_count]]} />}
+      {activeTab === 'raw' && <div className="page-stack"><DataTable rows={filtered.rawAudits} empty="No raw audit reports." columns={[["Audit report", (r) => <><strong>{r.checklist_name}</strong><span>{r.source_file_name}</span></>], ["Location", (r) => r.location_name_text], ["Client", (r) => r.client_name], ["Date", (r) => day(r.completed_at ?? r.report_date)], ["Score", (r) => pct(r.score_percentage)], ["Auditor", (r) => r.submitted_by_name]]} /><DataTable rows={filtered.rawCompletions} empty="No raw completion reports." columns={[["Completion report", (r) => <><strong>{r.location_name_text}</strong><span>{r.source_file_name}</span></>], ["Client", (r) => r.client_name], ["Period", (r) => `${day(r.date_range_start)} → ${day(r.date_range_end)}`], ["Lists completed", (r) => pct(r.lists_completed_pct)], ["Lists missed", (r) => pct(r.lists_missed_pct)], ["Items missed", (r) => pct(r.items_missed_pct)]]} /></div>}
     </div>
   );
 }
 
-function Overview({ topLocation, topPrediction, topDriver, actions }: { topLocation?: Row; topPrediction?: Row; topDriver?: Row; actions: Row[] }) {
-  return (
-    <div className="two-column">
-      <section className="card"><div className="section-header"><div><p className="eyebrow">Audit Summary</p><h2>Where the audit report needs attention</h2></div><BarChart3 size={20} /></div><div className="stack-list"><article className="list-card"><h3>Highest current audit risk</h3><p>{topLocation?.location_name ?? 'No location data yet'}</p><span className={`severity-badge ${severityClass(topLocation?.risk_level ?? topLocation?.predicted_risk_level)}`}>{topLocation?.risk_level ?? topLocation?.predicted_risk_level ?? '—'} · {num(topLocation?.risk_score ?? topLocation?.calculated_risk_score)}/100</span></article><article className="list-card"><h3>Highest predicted audit risk</h3><p>{topPrediction?.location_name ?? 'No prediction yet'}</p><span className={`severity-badge ${severityClass(topPrediction?.predicted_risk_level)}`}>{topPrediction?.predicted_risk_level ?? '—'} · {topPrediction?.recommended_visit_window ?? '—'}</span></article><article className="list-card"><h3>Main audit driver</h3><p>{topDriver ? `${topDriver.driver_label}: ${topDriver.explanation}` : 'No audit explanation found yet.'}</p><span className="muted-text">Impact: {num(topDriver?.impact_points)} points</span></article></div></section>
-      <section className="card"><div className="section-header"><div><p className="eyebrow">Corrective Actions</p><h2>Top audit action plan</h2></div><ListChecks size={20} /></div><div className="stack-list">{actions.slice(0, 8).map((action, index) => <article className="list-card" key={action.action_reference ?? index}><span className={`severity-badge ${severityClass(action.severity)}`}>{action.severity}</span><h3>{action.action_title}</h3><p>{action.recommended_action}</p><span className="muted-text">{action.location_name} · {action.checklist_name ?? 'No checklist'} · Due {date(action.suggested_due_at)}</span></article>)}{!actions.length && <span className="muted-text">No corrective actions generated yet.</span>}</div></section>
-    </div>
-  );
+function DashboardCards({ weakestLocation, topFailed, urgentFindings }: { weakestLocation?: Row; topFailed?: Row; urgentFindings: Row[] }) {
+  return <div className="two-column"><section className="card"><div className="section-header"><div><p className="eyebrow">Standard audit dashboard</p><h2>Monitoring widgets</h2></div><BarChart3 size={20} /></div><div className="stack-list"><article className="list-card"><h3>Average audit score by location</h3><p>{weakestLocation ? `${weakestLocation.location_name} has the weakest score at ${pct(weakestLocation.average_audit_score)}.` : 'No location data.'}</p></article><article className="list-card"><h3>Top failed item/question</h3><p>{topFailed ? `${topFailed.item_text} failed ${topFailed.failure_count} time(s).` : 'No failed items.'}</p></article><article className="list-card"><h3>Urgent findings</h3><p>{urgentFindings.length} urgent failed item(s) should appear at the top of the audit PDF.</p></article></div></section><section className="card"><div className="section-header"><div><p className="eyebrow">PDF output</p><h2>Pen-and-paper report structure</h2></div><FileText size={20} /></div><div className="stack-list"><article className="list-card"><h3>Header</h3><p>Client, location, date/time, auditor, and checklist/audit name.</p></article><article className="list-card"><h3>Body</h3><p>Sections, questions, answers, scores, comments, and status.</p></article><article className="list-card"><h3>Conclusion</h3><p>Final score, final result, critical fail reason, and urgent findings.</p></article></div></section></div>;
 }
 
 function DataTable({ rows, columns, empty }: { rows: Row[]; columns: Array<[string, (row: Row, index: number) => ReactNode]>; empty: string }) {
-  return <section className="card"><div className="table-wrap"><table><thead><tr>{columns.map(([label]) => <th key={label}>{label}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={row.id ?? row.audit_item_id ?? row.action_reference ?? row.calculation_run_id ?? row.audit_report_id ?? row.completion_report_id ?? row.completion_checklist_id ?? index}>{columns.map(([label, render]) => <td key={label}>{render(row, index)}</td>)}</tr>)}{!rows.length && <tr><td colSpan={columns.length}>{empty}</td></tr>}</tbody></table></div></section>;
+  return <section className="card"><div className="table-wrap"><table><thead><tr>{columns.map(([label]) => <th key={label}>{label}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={row.id ?? row.audit_report_id ?? row.audit_item_id ?? row.checklist_name ?? index}>{columns.map(([label, render]) => <td key={label}>{render(row, index)}</td>)}</tr>)}{!rows.length && <tr><td colSpan={columns.length}>{empty}</td></tr>}</tbody></table></div></section>;
 }
