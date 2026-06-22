@@ -17,7 +17,7 @@ const emptyOrgId = '00000000-0000-0000-0000-000000000001';
 const envOrganizationId = import.meta.env.VITE_ORGANIZATION_ID as string | undefined;
 const organizationId = !envOrganizationId || envOrganizationId === emptyOrgId ? sampleOrgId : envOrganizationId;
 
-type ImportedTask = {
+type DisplayTask = {
   id: string;
   title: string;
   locationName: string;
@@ -26,7 +26,7 @@ type ImportedTask = {
   status: TaskStatus;
   priority: Severity;
   completionPercent: number;
-  source: string;
+  source?: string;
   note?: string;
 };
 
@@ -72,7 +72,7 @@ function deriveStatus(row: AuditItemRow): TaskStatus {
   return 'todo';
 }
 
-function mapAuditFailureToTask(row: AuditItemRow): ImportedTask {
+function mapAuditFailureToTask(row: AuditItemRow): DisplayTask {
   const locationName = row.audit_reports?.location_name_text || 'Imported report location';
   const checklistName = row.audit_reports?.checklist_name || 'Imported audit report';
   return {
@@ -89,8 +89,21 @@ function mapAuditFailureToTask(row: AuditItemRow): ImportedTask {
   };
 }
 
+function mapMockTask(task: (typeof tasks)[number]): DisplayTask {
+  return {
+    id: task.id,
+    title: task.title,
+    locationName: task.locationName,
+    owner: task.owner,
+    dueAt: task.dueAt,
+    status: task.status,
+    priority: task.priority,
+    completionPercent: task.completionPercent
+  };
+}
+
 export function TasksPage() {
-  const [importedTasks, setImportedTasks] = useState<ImportedTask[]>([]);
+  const [importedTasks, setImportedTasks] = useState<DisplayTask[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
@@ -122,13 +135,13 @@ export function TasksPage() {
     void loadImportedTasks();
   }, []);
 
-  const visibleTasks = useMockData ? tasks : importedTasks;
+  const visibleTasks: DisplayTask[] = useMockData ? tasks.map(mapMockTask) : importedTasks;
 
   const tasksByColumn = useMemo(() => {
     return columns.reduce((acc, column) => {
       acc[column.id] = visibleTasks.filter((task) => task.status === column.id);
       return acc;
-    }, {} as Record<(typeof columns)[number]['id'], typeof visibleTasks>);
+    }, {} as Record<(typeof columns)[number]['id'], DisplayTask[]>);
   }, [visibleTasks]);
 
   return (
@@ -152,8 +165,8 @@ export function TasksPage() {
                 <span className={`severity-badge ${task.priority}`}>{task.priority}</span>
                 <h4>{task.title}</h4>
                 <p>{task.locationName}</p>
-                {!useMockData && 'source' in task && <p className="muted-text"><ClipboardCheck size={15} /> {task.source}</p>}
-                {!useMockData && 'note' in task && task.note && <p className="recommendation-box"><AlertTriangle size={15} /> {task.note}</p>}
+                {!useMockData && task.source && <p className="muted-text"><ClipboardCheck size={15} /> {task.source}</p>}
+                {!useMockData && task.note && <p className="recommendation-box"><AlertTriangle size={15} /> {task.note}</p>}
                 <div className="mini-grid single">
                   <span><UserRound size={15} /> {task.owner}</span>
                   <span><CalendarClock size={15} /> {formatDateTime(task.dueAt)}</span>
