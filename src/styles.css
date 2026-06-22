@@ -54,7 +54,6 @@ button { cursor: pointer; }
 .toolbar-card { display: flex; justify-content: space-between; align-items: center; padding: 16px; gap: 12px; }
 .notice-card { padding: 14px 18px; color: var(--text); line-height: 1.55; }
 
-
 .metric-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; }
 .metric-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .metric-card { display: flex; gap: 14px; align-items: flex-start; padding: 18px; border-radius: 20px; background: white; border: 1px solid var(--line); box-shadow: var(--shadow); }
@@ -134,6 +133,14 @@ td span { color: var(--muted); font-size: 13px; }
 .recommendation-box { display: flex; gap: 9px; align-items: flex-start; background: #f8fafc; border: 1px solid var(--line); padding: 12px; border-radius: 16px; margin: 14px 0; line-height: 1.55; }
 .insight-footer { align-items: center; margin-top: 16px; color: var(--muted); font-size: 13px; }
 
+/* AI Analytics advanced filters */
+.toolbar-card:has(.filters-grid) { display: grid; align-items: stretch; }
+.filters-grid { width: 100%; display: grid; grid-template-columns: repeat(6, minmax(150px, 1fr)); gap: 12px; align-items: end; }
+.filters-grid label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; }
+.filters-grid select, .filters-grid input[type="date"] { width: 100%; min-height: 42px; border: 1px solid var(--line); border-radius: 14px; background: white; color: var(--text); padding: 0 12px; outline: 0; }
+.secondary-button { border: 1px solid var(--line); border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-weight: 700; background: #f8fafc; color: var(--text); padding: 10px 14px; }
+.secondary-button:hover { background: #eef2f7; }
+
 @media (max-width: 1180px) {
   .app-shell { grid-template-columns: 1fr; }
   .sidebar { position: static; height: auto; }
@@ -141,6 +148,7 @@ td span { color: var(--muted); font-size: 13px; }
   .metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .two-column { grid-template-columns: 1fr; }
   .location-grid, .template-grid, .insights-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .filters-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 @media (max-width: 760px) {
@@ -148,5 +156,6 @@ td span { color: var(--muted); font-size: 13px; }
   .topbar, .hero-card, .toolbar-card, .insight-header, .insight-footer { flex-direction: column; align-items: stretch; }
   .nav-list { grid-template-columns: 1fr; }
   .metric-grid, .metric-grid.three, .location-grid, .template-grid, .insights-grid { grid-template-columns: 1fr; }
+  .filters-grid { grid-template-columns: 1fr; }
   .hero-card h2 { font-size: 26px; }
 }
