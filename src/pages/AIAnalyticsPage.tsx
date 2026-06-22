@@ -70,6 +70,75 @@ function severityClass(value: unknown) {
   return ['critical', 'high', 'medium', 'low'].includes(severity) ? severity : 'low';
 }
 
+function riskScore(row?: Row) {
+  return Number(row?.risk_score ?? row?.calculated_risk_score ?? row?.current_risk_score ?? 0);
+}
+
+function riskLevelFromScore(score: number) {
+  if (score >= 80) return 'critical';
+  if (score >= 60) return 'high';
+  if (score >= 35) return 'medium';
+  return 'low';
+}
+
+function rowLocation(row?: Row) {
+  return safe(row?.location_name ?? row?.location_name_text ?? row?.entity_reference ?? '');
+}
+
+function sameLocation(row: Row, locationName: string) {
+  return rowLocation(row).toLowerCase() === locationName.toLowerCase();
+}
+
+function buildFallbackPrediction(topLocation: Row | undefined, actions: Row[], failedItems: Row[]) {
+  if (!topLocation) return undefined;
+  const locationName = rowLocation(topLocation);
+  const currentRisk = riskScore(topLocation);
+  const locationActions = actions.filter((row) => sameLocation(row, locationName));
+  const locationFailures = failedItems.filter((row) => sameLocation(row, locationName));
+  const criticalSignals = locationActions.filter((row) => severityClass(row.severity) === 'critical').length + locationFailures.filter((row) => severityClass(row.severity) === 'critical' || row.is_critical).length;
+  const highSignals = locationActions.filter((row) => severityClass(row.severity) === 'high').length + locationFailures.filter((row) => severityClass(row.severity) === 'high').length;
+  const repeatedSignals = Number(topLocation.repeated_issue_count ?? 0);
+  const predictedRisk = Math.min(100, currentRisk + Math.min(7, criticalSignals * 0.9 + highSignals * 0.5 + repeatedSignals * 0.4));
+  const level = riskLevelFromScore(predictedRisk);
+  const visitWindow = level === 'critical' ? 'Immediate visit / within 24 hours' : level === 'high' ? 'Within 3 days' : level === 'medium' ? 'Within 7 days' : 'Routine follow-up';
+  return {
+    location_name: locationName,
+    current_risk_score: currentRisk,
+    predicted_next_risk_score: predictedRisk,
+    predicted_next_audit_score: Math.max(0, 100 - predictedRisk),
+    predicted_risk_level: level,
+    trend_direction: criticalSignals > 0 ? 'risk increasing' : 'stable',
+    recommended_visit_window: visitWindow,
+    prediction_reason: `Fallback prediction from current risk ${num(currentRisk)}, ${criticalSignals} critical signal(s), ${highSignals} high signal(s), and ${repeatedSignals} repeated issue(s).`
+  };
+}
+
+function buildFallbackDriver(topLocation: Row | undefined, actions: Row[], failedItems: Row[]) {
+  if (!topLocation) return undefined;
+  const locationName = rowLocation(topLocation);
+  const locationFailures = failedItems.filter((row) => sameLocation(row, locationName));
+  const locationActions = actions.filter((row) => sameLocation(row, locationName));
+  const criticalFailure = locationFailures.find((row) => severityClass(row.severity) === 'critical' || row.is_critical);
+  const criticalAction = locationActions.find((row) => severityClass(row.severity) === 'critical');
+  const source = criticalFailure ?? criticalAction ?? locationFailures[0] ?? locationActions[0];
+  const risk = riskScore(topLocation);
+  if (!source && !risk) return undefined;
+  const label = source?.risk_category ?? source?.action_title ?? source?.item_text ?? 'High location risk score';
+  const explanation = source
+    ? `${safe(source.item_text ?? source.action_title ?? 'Critical finding')} is driving the location risk. ${safe(source.comment_text ?? source.recommended_action ?? '')}`
+    : `The location has a high calculated risk score of ${num(risk)}/100.`;
+  return {
+    location_name: locationName,
+    driver_label: label,
+    driver_group: source?.section_name ?? source?.risk_category ?? 'location risk',
+    actual_value: source ? 1 : risk,
+    impact_points: source ? Math.max(10, Math.min(35, risk / 3)) : risk,
+    risk_score: risk,
+    driver_rank: 1,
+    explanation
+  };
+}
+
 function makePdf(lines: string[]) {
   const esc = (text: string) => safe(text).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
   const pages: string[][] = [];
@@ -223,6 +292,22 @@ export function AIAnalyticsPage() {
     }
   }
 
+  const search = searchText.trim().toLowerCase();
+  const filterRows = (rows: Row[]) => rows.filter((row) => !search || JSON.stringify(row).toLowerCase().includes(search));
+
+  const avgRisk = summary?.avg_risk_score ?? (locations.length ? locations.reduce((sum, row) => sum + Number(row.risk_score ?? row.calculated_risk_score ?? 0), 0) / locations.length : null);
+  const avgHealth = summary?.avg_health_score ?? (avgRisk === null ? null : 100 - Number(avgRisk));
+  const totalFailed = summary?.total_failed_items ?? locations.reduce((sum, row) => sum + Number(row.failed_item_count ?? 0), 0);
+  const totalCritical = summary?.total_critical_failures ?? locations.reduce((sum, row) => sum + Number(row.critical_failed_item_count ?? 0), 0);
+  const topLocation = locations[0];
+  const fallbackPrediction = buildFallbackPrediction(topLocation, actions, failedItems);
+  const predictionRows = predictions.length ? predictions : (fallbackPrediction ? [fallbackPrediction] : []);
+  const topPrediction = predictionRows[0];
+  const fallbackDriver = buildFallbackDriver(topLocation, actions, failedItems);
+  const explanationRows = explanations.length ? explanations : (fallbackDriver ? [fallbackDriver] : []);
+  const topDriver = explanationRows[0];
+  const lastRun = runs[0];
+
   function downloadPdf() {
     const lines = [
       'InCheck360 Management Report',
@@ -238,7 +323,7 @@ export function AIAnalyticsPage() {
       ...lineage.map((row) => `${safe(row.layer)} | ${safe(row.table_name)} | rows ${safe(row.row_count)} | generated_by ${safe(row.generated_by ?? 'not generated')} | run ${safe(row.calculation_run_id)}`),
       '',
       'PREDICTIVE RISK',
-      ...predictions.slice(0, 20).map((row, index) => `${index + 1}. ${safe(row.location_name)} - current ${safe(row.current_risk_score)}/100, predicted ${safe(row.predicted_next_risk_score)}/100 (${safe(row.predicted_risk_level)})`),
+      ...predictionRows.slice(0, 20).map((row, index) => `${index + 1}. ${safe(row.location_name)} - current ${safe(row.current_risk_score)}/100, predicted ${safe(row.predicted_next_risk_score)}/100 (${safe(row.predicted_risk_level)})`),
       '',
       'ACTION PLAN',
       ...actions.slice(0, 35).map((row, index) => `${index + 1}. [${safe(row.severity)}] ${safe(row.location_name)} - ${safe(row.action_title)}. ${safe(row.recommended_action)}`)
@@ -253,18 +338,6 @@ export function AIAnalyticsPage() {
     link.remove();
     URL.revokeObjectURL(url);
   }
-
-  const search = searchText.trim().toLowerCase();
-  const filterRows = (rows: Row[]) => rows.filter((row) => !search || JSON.stringify(row).toLowerCase().includes(search));
-
-  const avgRisk = summary?.avg_risk_score ?? (locations.length ? locations.reduce((sum, row) => sum + Number(row.risk_score ?? row.calculated_risk_score ?? 0), 0) / locations.length : null);
-  const avgHealth = summary?.avg_health_score ?? (avgRisk === null ? null : 100 - Number(avgRisk));
-  const totalFailed = summary?.total_failed_items ?? locations.reduce((sum, row) => sum + Number(row.failed_item_count ?? 0), 0);
-  const totalCritical = summary?.total_critical_failures ?? locations.reduce((sum, row) => sum + Number(row.critical_failed_item_count ?? 0), 0);
-  const topLocation = locations[0];
-  const topPrediction = predictions[0];
-  const topDriver = explanations[0];
-  const lastRun = runs[0];
 
   return (
     <div className="page-stack">
@@ -300,8 +373,8 @@ export function AIAnalyticsPage() {
       {activeTab === 'overview' && <Overview topLocation={topLocation} topPrediction={topPrediction} topDriver={topDriver} actions={actions} />}
       {activeTab === 'client' && <DataTable rows={filterRows(clientRows)} empty="No client dashboard rows found." columns={[["Company", (r) => <><strong>{r.company_name ?? r.organization_id}</strong><span>{r.organization_id}</span></>], ["Reports", (r) => `${r.audit_report_count ?? 0} audits / ${r.completion_report_count ?? 0} completion`], ["Avg risk", (r) => `${num(r.avg_risk_score)}/100`], ["Avg health", (r) => `${num(r.avg_health_score)}/100`], ["Risk locations", (r) => `${r.critical_location_count ?? 0} critical / ${r.high_risk_location_count ?? 0} high`], ["Failures", (r) => `${r.total_failed_items ?? 0} failed / ${r.total_critical_failures ?? 0} critical`], ["Top category", (r) => r.top_risk_category ?? '—'], ["Actions", (r) => r.open_action_count ?? '—']]} />}
       {activeTab === 'locations' && <DataTable rows={filterRows(locations)} empty="No location ML rows found. Run Advanced ML." columns={[["Location", (r) => <><strong>{r.location_name ?? '—'}</strong><span>{r.audit_report_count ?? 0} audit / {r.completion_report_count ?? 0} completion</span></>], ["Risk", (r) => <><span className={`severity-badge ${severityClass(r.risk_level ?? r.predicted_risk_level)}`}>{r.risk_level ?? r.predicted_risk_level ?? '—'}</span><strong>{num(r.risk_score ?? r.calculated_risk_score)}/100</strong></>], ["Health", (r) => `${num(r.health_score)}/100`], ["Audit", (r) => pct(r.avg_audit_score_pct ?? r.avg_audit_score_percentage)], ["Failed", (r) => `${r.failed_item_count ?? 0} (${r.critical_failed_item_count ?? 0} critical)`], ["Missed", (r) => `Lists ${pct(r.avg_lists_missed_pct)} / Items ${pct(r.avg_items_missed_pct)}`], ["Confidence", (r) => pct(Number(r.confidence ?? 0) * 100)]]} />}
-      {activeTab === 'explanation' && <DataTable rows={filterRows(explanations)} empty="No ML explanations found." columns={[["Location", (r) => <><strong>{r.location_name ?? '—'}</strong><span>Risk {num(r.risk_score)}/100</span></>], ["Driver", (r) => <><strong>{r.driver_label}</strong><span>{r.driver_group}</span></>], ["Actual", (r) => num(r.actual_value)], ["Impact", (r) => <strong>{num(r.impact_points)} pts</strong>], ["Rank", (r) => `#${r.driver_rank ?? '—'}`], ["Explanation", (r) => r.explanation ?? '—']]} />}
-      {activeTab === 'predictive' && <DataTable rows={filterRows(predictions)} empty="No predictive risk rows found." columns={[["Location", (r) => <><strong>{r.location_name ?? '—'}</strong><span>{r.trend_direction ?? 'stable'}</span></>], ["Current", (r) => `${num(r.current_risk_score)}/100`], ["Predicted", (r) => <><span className={`severity-badge ${severityClass(r.predicted_risk_level)}`}>{r.predicted_risk_level ?? '—'}</span><strong>{num(r.predicted_next_risk_score)}/100</strong></>], ["Audit forecast", (r) => pct(r.predicted_next_audit_score)], ["Delta", (r) => num(r.risk_delta)], ["Visit", (r) => r.recommended_visit_window ?? '—'], ["Reason", (r) => r.prediction_reason ?? '—']]} />}
+      {activeTab === 'explanation' && <DataTable rows={filterRows(explanationRows)} empty="No ML explanations found." columns={[["Location", (r) => <><strong>{r.location_name ?? '—'}</strong><span>Risk {num(r.risk_score)}/100</span></>], ["Driver", (r) => <><strong>{r.driver_label}</strong><span>{r.driver_group}</span></>], ["Actual", (r) => num(r.actual_value)], ["Impact", (r) => <strong>{num(r.impact_points)} pts</strong>], ["Rank", (r) => `#${r.driver_rank ?? '—'}`], ["Explanation", (r) => r.explanation ?? '—']]} />}
+      {activeTab === 'predictive' && <DataTable rows={filterRows(predictionRows)} empty="No predictive risk rows found." columns={[["Location", (r) => <><strong>{r.location_name ?? '—'}</strong><span>{r.trend_direction ?? 'stable'}</span></>], ["Current", (r) => `${num(r.current_risk_score)}/100`], ["Predicted", (r) => <><span className={`severity-badge ${severityClass(r.predicted_risk_level)}`}>{r.predicted_risk_level ?? '—'}</span><strong>{num(r.predicted_next_risk_score)}/100</strong></>], ["Audit forecast", (r) => pct(r.predicted_next_audit_score)], ["Delta", (r) => num(r.risk_delta)], ["Visit", (r) => r.recommended_visit_window ?? '—'], ["Reason", (r) => r.prediction_reason ?? '—']]} />}
       {activeTab === 'benchmarking' && <div className="page-stack"><DataTable rows={filterRows(locationBenchmarks)} empty="No location benchmark rows found." columns={[["Location", (r) => <><strong>{r.location_name ?? '—'}</strong><span>Risk rank #{r.risk_rank_high_to_low ?? '—'}</span></>], ["Risk", (r) => `${num(r.risk_score)}/100`], ["Company avg", (r) => `${num(r.company_avg_risk_score)}/100`], ["Vs avg", (r) => num(r.risk_vs_company_avg)], ["Percentile", (r) => pct(r.risk_percentile)], ["Health rank", (r) => `#${r.health_rank_best_to_worst ?? '—'}`]]} /><DataTable rows={filterRows(categoryBenchmarks)} empty="No category benchmark rows found." columns={[["Category", (r) => <strong>{r.risk_category ?? 'general'}</strong>], ["Rank", (r) => `#${r.category_failure_rank ?? '—'}`], ["Failed", (r) => r.total_failed_items ?? 0], ["Critical", (r) => r.total_critical_failed_items ?? 0], ["Locations", (r) => r.affected_location_count ?? 0], ["Avg score", (r) => pct(r.avg_item_score_pct)]]} /><DataTable rows={filterRows(sectionBenchmarks)} empty="No section benchmark rows found." columns={[["Section", (r) => <strong>{r.section_name ?? '—'}</strong>], ["Weak rank", (r) => `#${r.weakest_section_rank ?? '—'}`], ["Avg score", (r) => pct(r.avg_section_score_pct)], ["Min score", (r) => pct(r.min_section_score_pct)], ["Failed", (r) => r.failed_item_count ?? 0], ["Critical", (r) => r.critical_failed_item_count ?? 0], ["Locations", (r) => r.affected_location_count ?? 0]]} /></div>}
       {activeTab === 'categories' && <DataTable rows={filterRows(categories)} empty="No category analytics found." columns={[["Category", (r) => <><strong>{r.risk_category ?? 'general'}</strong><span>{r.location_name}</span></>], ["Risk", (r) => <span className={`severity-badge ${severityClass(r.category_risk_level)}`}>{r.category_risk_level ?? '—'}</span>], ["Failures", (r) => r.failed_item_count ?? 0], ["Critical", (r) => r.critical_failed_item_count ?? 0], ["Audits", (r) => r.affected_audit_count ?? 0], ["Sections", (r) => r.affected_section_count ?? 0], ["Avg item score", (r) => pct(r.avg_item_score_pct)], ["Latest", (r) => date(r.latest_failure_at)]]} />}
       {activeTab === 'sections' && <DataTable rows={filterRows(sections)} empty="No section analytics found." columns={[["Section", (r) => <><strong>{r.section_name ?? '—'}</strong><span>{r.checklist_name} · {r.location_name}</span></>], ["Risk", (r) => <span className={`severity-badge ${severityClass(r.section_risk_level)}`}>{r.section_risk_level ?? '—'}</span>], ["Avg score", (r) => pct(r.avg_section_score_pct)], ["Min score", (r) => pct(r.min_section_score_pct)], ["Failed", (r) => r.failed_item_count ?? 0], ["Critical", (r) => r.critical_failed_item_count ?? 0], ["Latest", (r) => date(r.latest_section_at)]]} />}
@@ -323,7 +396,7 @@ function Overview({ topLocation, topPrediction, topDriver, actions }: { topLocat
         <div className="stack-list">
           <article className="list-card"><h3>Highest current risk</h3><p>{topLocation?.location_name ?? 'No location data yet'}</p><span className={`severity-badge ${severityClass(topLocation?.risk_level ?? topLocation?.predicted_risk_level)}`}>{topLocation?.risk_level ?? topLocation?.predicted_risk_level ?? '—'} · {num(topLocation?.risk_score ?? topLocation?.calculated_risk_score)}/100</span></article>
           <article className="list-card"><h3>Highest predicted risk</h3><p>{topPrediction?.location_name ?? 'No prediction yet'}</p><span className={`severity-badge ${severityClass(topPrediction?.predicted_risk_level)}`}>{topPrediction?.predicted_risk_level ?? '—'} · {topPrediction?.recommended_visit_window ?? '—'}</span></article>
-          <article className="list-card"><h3>Main ML driver</h3><p>{topDriver ? `${topDriver.driver_label}: ${topDriver.explanation}` : 'Run Advanced ML after installing SQL.'}</p><span className="muted-text">Impact: {num(topDriver?.impact_points)} points</span></article>
+          <article className="list-card"><h3>Main ML driver</h3><p>{topDriver ? `${topDriver.driver_label}: ${topDriver.explanation}` : 'No driver found yet.'}</p><span className="muted-text">Impact: {num(topDriver?.impact_points)} points</span></article>
         </div>
       </section>
       <section className="card">
