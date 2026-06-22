@@ -290,14 +290,24 @@ function severityClass(value: string | null | undefined) {
 
 function plain(value: unknown): string {
   if (value === null || value === undefined) return '—';
-  return String(value).replace(/[\u2010-\u2015]/g, '-').replace(/[^\x20-\x7E]/g, ' ');
+  return String(value)
+    .replace(/[\u2010-\u2015]/g, '-')
+    .replace(/[^\x20-\x7E]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim() || '—';
 }
 
 function asRecords(value: unknown): Array<Record<string, unknown>> {
-  return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item)) : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+    : [];
 }
 
-function wrapLine(text: string, max = 92): string[] {
+function pdfEscape(text: string): string {
+  return plain(text).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+}
+
+function wrapText(text: string, maxChars: number): string[] {
   const words = plain(text).split(/\s+/).filter(Boolean);
   const lines: string[] = [];
   let line = '';
@@ -306,7 +316,7 @@ function wrapLine(text: string, max = 92): string[] {
       line = word;
       return;
     }
-    if (`${line} ${word}`.length > max) {
+    if (`${line} ${word}`.length > maxChars) {
       lines.push(line);
       line = word;
     } else {
@@ -317,123 +327,328 @@ function wrapLine(text: string, max = 92): string[] {
   return lines.length ? lines : ['—'];
 }
 
-function pdfEscape(text: string): string {
-  return plain(text).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
-}
+type PdfColor = [number, number, number];
+type PdfCell = unknown;
 
-function section(lines: string[], title: string, rows: string[]) {
-  lines.push('', title.toUpperCase());
-  rows.forEach((row) => wrapLine(row).forEach((wrapped) => lines.push(wrapped)));
-}
+type PdfTableColumn<T> = {
+  title: string;
+  width: number;
+  value: (row: T, index: number) => PdfCell;
+  maxChars?: number;
+};
 
-function buildManagementReportLines(report: Record<string, unknown>) {
-  const meta = (report.report_meta ?? {}) as Record<string, unknown>;
-  const summary = (report.executive_summary ?? {}) as Record<string, unknown>;
-  const predictions = asRecords(report.predictive_risk);
-  const explanations = asRecords(report.ml_explanations);
-  const locationBenchmarks = asRecords(report.location_benchmarking);
-  const categoryBenchmarks = asRecords(report.category_benchmarking);
-  const actions = asRecords(report.action_plan);
-  const failed = asRecords(report.failed_items);
+type PdfPage = {
+  commands: string[];
+};
 
-  const lines: string[] = [
-    'InCheck360 Management Report',
-    'Advanced Internal ML v2 - PDF Export',
-    `Organization: ${plain(meta.organization_id ?? summary.organization_id ?? organizationId)}`,
-    `Period: ${plain(meta.period_start ?? reportPeriodStart)} to ${plain(meta.period_end ?? reportPeriodEnd)}`,
-    `Generated: ${plain(meta.generated_at ?? new Date().toISOString())}`
-  ];
+class ProfessionalPdf {
+  private pages: PdfPage[] = [];
+  private y = 0;
+  private readonly width = 595;
+  private readonly height = 842;
+  private readonly margin = 42;
+  private readonly bottom = 58;
+  private pageTitle = '';
+  private readonly navy: PdfColor = [0.08, 0.12, 0.20];
+  private readonly blue: PdfColor = [0.10, 0.31, 0.70];
+  private readonly gray: PdfColor = [0.45, 0.48, 0.55];
+  private readonly lightGray: PdfColor = [0.96, 0.97, 0.98];
+  private readonly border: PdfColor = [0.84, 0.87, 0.91];
+  private readonly danger: PdfColor = [0.75, 0.12, 0.12];
+  private readonly warning: PdfColor = [0.78, 0.42, 0.04];
+  private readonly success: PdfColor = [0.10, 0.45, 0.25];
 
-  section(lines, 'Executive Summary', [
-    `Company: ${plain(summary.company_name ?? summary.organization_id ?? organizationId)}`,
-    `Locations: ${plain(summary.location_count)} | Audit reports: ${plain(summary.audit_report_count)} | Completion reports: ${plain(summary.completion_report_count)}`,
-    `Average risk: ${plain(summary.avg_risk_score)}/100 | Average health: ${plain(summary.avg_health_score)}/100`,
-    `Critical locations: ${plain(summary.critical_location_count)} | High risk locations: ${plain(summary.high_risk_location_count)}`,
-    `Failed items: ${plain(summary.total_failed_items)} | Critical failures: ${plain(summary.total_critical_failures)} | Repeated issues: ${plain(summary.total_repeated_issues)}`,
-    `Top risk category: ${plain(summary.top_risk_category)} (${plain(summary.top_category_failures)} failures)`,
-    `Open actions: ${plain(summary.open_action_count)} | High priority actions: ${plain(summary.high_priority_action_count)}`
-  ]);
+  constructor(private readonly report: Record<string, unknown>) {}
 
-  section(lines, 'Predictive Risk', predictions.slice(0, 8).map((row, index) => (
-    `${index + 1}. ${plain(row.location_name)} - current risk ${plain(row.current_risk_score)}/100, predicted risk ${plain(row.predicted_next_risk_score)}/100 (${plain(row.predicted_risk_level)}). Visit window: ${plain(row.recommended_visit_window)}. Reason: ${plain(row.prediction_reason)}`
-  )));
-
-  section(lines, 'ML Explanation - Top Drivers', explanations.slice(0, 12).map((row, index) => (
-    `${index + 1}. ${plain(row.location_name)} - ${plain(row.driver_label)} (${plain(row.driver_group)}): ${plain(row.impact_points)} impact points. ${plain(row.explanation)}`
-  )));
-
-  section(lines, 'Location Benchmarking', locationBenchmarks.slice(0, 10).map((row, index) => (
-    `${index + 1}. ${plain(row.location_name)} - risk rank #${plain(row.risk_rank_high_to_low)}, risk ${plain(row.risk_score)}/100, health ${plain(row.health_score)}/100, vs company avg ${plain(row.risk_vs_company_avg)}.`
-  )));
-
-  section(lines, 'Category Benchmarking', categoryBenchmarks.slice(0, 10).map((row, index) => (
-    `${index + 1}. ${plain(row.risk_category)} - ${plain(row.total_failed_items)} failures, ${plain(row.total_critical_failed_items)} critical, ${plain(row.affected_location_count)} affected locations.`
-  )));
-
-  section(lines, 'Priority Action Plan', actions.slice(0, 20).map((row, index) => (
-    `${index + 1}. [${plain(row.severity)}] ${plain(row.location_name)} - ${plain(row.action_title)}. Due: ${plain(row.suggested_due_at)}. Action: ${plain(row.recommended_action)}`
-  )));
-
-  section(lines, 'Failed Item Details', failed.slice(0, 20).map((row, index) => (
-    `${index + 1}. [${plain(row.severity)}] ${plain(row.location_name)} / ${plain(row.section_name)} - ${plain(row.item_text)}. Comment: ${plain(row.comment_text)}. Action: ${plain(row.recommended_action)}`
-  )));
-
-  return lines;
-}
-
-function makePdfBlob(lines: string[]) {
-  const pageWidth = 595;
-  const pageHeight = 842;
-  const marginX = 48;
-  const startY = 790;
-  const maxLinesPerPage = 50;
-  const pages: string[][] = [];
-  for (let i = 0; i < lines.length; i += maxLinesPerPage) {
-    pages.push(lines.slice(i, i + maxLinesPerPage));
+  build() {
+    this.cover();
+    this.executiveSummary();
+    this.predictiveRisk();
+    this.mlExplanation();
+    this.benchmarking();
+    this.actionPlan();
+    this.failedItems();
+    return this.toBlob();
   }
 
-  const objects: string[] = [];
-  objects.push('<< /Type /Catalog /Pages 2 0 R >>');
-  const pageObjectNumbers = pages.map((_, index) => 4 + index * 2);
-  objects.push(`<< /Type /Pages /Kids [${pageObjectNumbers.map((num) => `${num} 0 R`).join(' ')}] /Count ${pages.length} >>`);
-  objects.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  private get current() {
+    return this.pages[this.pages.length - 1];
+  }
 
-  pages.forEach((pageLines, pageIndex) => {
-    const pageObjectNumber = 4 + pageIndex * 2;
-    const contentObjectNumber = pageObjectNumber + 1;
-    const content = [
-      'BT',
-      '/F1 11 Tf',
-      '14 TL',
-      `${marginX} ${startY} Td`,
-      ...pageLines.flatMap((line, index) => {
-        const font = index === 0 && pageIndex === 0 ? '/F1 18 Tf' : index === 1 && pageIndex === 0 ? '/F1 12 Tf' : '/F1 10 Tf';
-        return [font, `(${pdfEscape(line)}) Tj`, 'T*'];
-      }),
-      'ET'
-    ].join('\n');
-    objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 3 0 R >> >> /Contents ${contentObjectNumber} 0 R >>`);
-    objects.push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
-  });
+  private newPage(title = 'Management Report') {
+    this.pages.push({ commands: [] });
+    this.pageTitle = title;
+    this.y = this.height - 44;
+    if (this.pages.length > 1) this.header(title);
+  }
 
-  let pdf = '%PDF-1.4\n';
-  const offsets = [0];
-  objects.forEach((object, index) => {
-    offsets.push(pdf.length);
-    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
-  });
-  const xrefStart = pdf.length;
-  pdf += `xref\n0 ${objects.length + 1}\n`;
-  pdf += '0000000000 65535 f \n';
-  offsets.slice(1).forEach((offset) => {
-    pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
-  });
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
-  return new Blob([pdf], { type: 'application/pdf' });
+  private color([r, g, b]: PdfColor, stroke = false) {
+    this.current.commands.push(`${r.toFixed(3)} ${g.toFixed(3)} ${b.toFixed(3)} ${stroke ? 'RG' : 'rg'}`);
+  }
+
+  private rect(x: number, y: number, w: number, h: number, fill?: PdfColor, stroke?: PdfColor) {
+    if (fill) {
+      this.color(fill);
+      this.current.commands.push(`${x} ${y} ${w} ${h} re f`);
+    }
+    if (stroke) {
+      this.color(stroke, true);
+      this.current.commands.push(`${x} ${y} ${w} ${h} re S`);
+    }
+  }
+
+  private text(value: string, x: number, y: number, size = 9, color: PdfColor = [0.11, 0.13, 0.18], bold = false) {
+    this.color(color);
+    this.current.commands.push(`BT /${bold ? 'F2' : 'F1'} ${size} Tf ${x} ${y} Td (${pdfEscape(value)}) Tj ET`);
+  }
+
+  private line(x1: number, y1: number, x2: number, y2: number, color: PdfColor = this.border) {
+    this.color(color, true);
+    this.current.commands.push(`${x1} ${y1} m ${x2} ${y2} l S`);
+  }
+
+  private header(title: string) {
+    this.rect(0, this.height - 40, this.width, 40, this.navy);
+    this.text('InCheck360', this.margin, this.height - 25, 13, [1, 1, 1], true);
+    this.text(title, this.width - 245, this.height - 24, 9, [0.88, 0.93, 1], false);
+    this.y = this.height - 70;
+  }
+
+  private footer(pageIndex: number) {
+    this.line(this.margin, 38, this.width - this.margin, 38, this.border);
+    this.text('InCheck360 Advanced Internal ML v2', this.margin, 24, 8, this.gray);
+    this.text(`Page ${pageIndex + 1}`, this.width - 80, 24, 8, this.gray);
+  }
+
+  private ensure(height: number, title = this.pageTitle) {
+    if (this.y - height < this.bottom) {
+      this.newPage(title);
+    }
+  }
+
+  private title(text: string, subtitle?: string) {
+    this.ensure(45);
+    this.text(text, this.margin, this.y, 16, this.navy, true);
+    this.y -= 17;
+    if (subtitle) {
+      wrapText(subtitle, 92).slice(0, 2).forEach((line) => {
+        this.text(line, this.margin, this.y, 9, this.gray);
+        this.y -= 12;
+      });
+    }
+    this.y -= 8;
+  }
+
+  private card(x: number, y: number, w: number, h: number, label: string, value: string, accent: PdfColor) {
+    this.rect(x, y, w, h, [1, 1, 1], this.border);
+    this.rect(x, y + h - 5, w, 5, accent);
+    this.text(label.toUpperCase(), x + 12, y + h - 22, 7, this.gray, true);
+    this.text(value, x + 12, y + 18, 18, this.navy, true);
+  }
+
+  private bulletList(items: string[]) {
+    items.forEach((item) => {
+      this.ensure(24);
+      this.text('•', this.margin, this.y, 10, this.blue, true);
+      const lines = wrapText(item, 86).slice(0, 3);
+      lines.forEach((line, index) => {
+        this.text(line, this.margin + 14, this.y - (index * 11), 9, [0.15, 0.17, 0.22]);
+      });
+      this.y -= Math.max(16, lines.length * 11 + 3);
+    });
+  }
+
+  private table<T>(title: string, rows: T[], columns: PdfTableColumn<T>[], options?: { maxRows?: number; subtitle?: string }) {
+    const visibleRows = rows.slice(0, options?.maxRows ?? rows.length);
+    this.title(title, options?.subtitle);
+    if (!visibleRows.length) {
+      this.text('No records available.', this.margin, this.y, 9, this.gray);
+      this.y -= 18;
+      return;
+    }
+
+    const tableWidth = this.width - (this.margin * 2);
+    const headerHeight = 22;
+    const rowHeight = 33;
+    const totalWidth = columns.reduce((sum, col) => sum + col.width, 0);
+    const scaledColumns = columns.map((col) => ({ ...col, width: (col.width / totalWidth) * tableWidth }));
+
+    this.ensure(headerHeight + rowHeight + 12);
+    this.rect(this.margin, this.y - headerHeight, tableWidth, headerHeight, this.navy);
+    let x = this.margin;
+    scaledColumns.forEach((col) => {
+      this.text(col.title, x + 6, this.y - 14, 7, [1, 1, 1], true);
+      x += col.width;
+    });
+    this.y -= headerHeight;
+
+    visibleRows.forEach((row, rowIndex) => {
+      this.ensure(rowHeight + headerHeight, title);
+      const fill = rowIndex % 2 === 0 ? [1, 1, 1] as PdfColor : this.lightGray;
+      this.rect(this.margin, this.y - rowHeight, tableWidth, rowHeight, fill, this.border);
+      let cellX = this.margin;
+      scaledColumns.forEach((col) => {
+        const raw = plain(col.value(row, rowIndex));
+        const lines = wrapText(raw, col.maxChars ?? Math.max(8, Math.floor(col.width / 5))).slice(0, 2);
+        lines.forEach((lineText, lineIndex) => {
+          this.text(lineText, cellX + 6, this.y - 12 - (lineIndex * 10), 7.5, [0.12, 0.14, 0.18], lineIndex === 0 && col.title.toLowerCase().includes('location'));
+        });
+        cellX += col.width;
+      });
+      this.y -= rowHeight;
+    });
+    this.y -= 14;
+  }
+
+  private cover() {
+    this.newPage('Executive Management Report');
+    const meta = (this.report.report_meta ?? {}) as Record<string, unknown>;
+    const summary = (this.report.executive_summary ?? {}) as Record<string, unknown>;
+
+    this.rect(0, 0, this.width, this.height, [0.98, 0.99, 1.00]);
+    this.rect(0, this.height - 220, this.width, 220, this.navy);
+    this.rect(0, this.height - 224, this.width, 6, this.blue);
+    this.text('InCheck360', this.margin, this.height - 74, 18, [1, 1, 1], true);
+    this.text('Management Report', this.margin, this.height - 118, 30, [1, 1, 1], true);
+    this.text('Advanced Internal ML v2 - Operations Intelligence', this.margin, this.height - 144, 13, [0.86, 0.91, 1.00]);
+    this.text(`Period: ${plain(meta.period_start ?? reportPeriodStart)} to ${plain(meta.period_end ?? reportPeriodEnd)}`, this.margin, this.height - 170, 10, [0.86, 0.91, 1.00]);
+    this.text(`Generated: ${plain(meta.generated_at ?? new Date().toISOString())}`, this.margin, this.height - 187, 9, [0.75, 0.82, 0.92]);
+
+    const cardY = this.height - 330;
+    const cardW = 118;
+    this.card(this.margin, cardY, cardW, 76, 'Locations', plain(summary.location_count), this.blue);
+    this.card(this.margin + 132, cardY, cardW, 76, 'Avg risk', `${plain(summary.avg_risk_score)}/100`, this.warning);
+    this.card(this.margin + 264, cardY, cardW, 76, 'Critical', plain(summary.total_critical_failures), this.danger);
+    this.card(this.margin + 396, cardY, cardW, 76, 'Actions', plain(summary.open_action_count), this.success);
+
+    this.y = cardY - 40;
+    this.title('Executive snapshot', 'A concise management view of location risk, failed controls, predictive exposure, and required corrective actions.');
+    this.bulletList([
+      `Company / Organization: ${plain(summary.company_name ?? summary.organization_id ?? organizationId)}`,
+      `Top risk category: ${plain(summary.top_risk_category)} with ${plain(summary.top_category_failures)} failure(s).`,
+      `${plain(summary.critical_location_count)} critical location(s) and ${plain(summary.high_risk_location_count)} high-risk location(s) were identified.`,
+      `${plain(summary.total_failed_items)} failed item(s), including ${plain(summary.total_critical_failures)} critical failure(s), require follow-up.`
+    ]);
+  }
+
+  private executiveSummary() {
+    this.newPage('Executive Summary');
+    const summary = (this.report.executive_summary ?? {}) as Record<string, unknown>;
+    this.title('Executive Summary', 'Operational health, risk concentration, and follow-up workload for the selected reporting period.');
+    this.card(this.margin, this.y - 80, 156, 66, 'Average health', `${plain(summary.avg_health_score)}/100`, this.success);
+    this.card(this.margin + 176, this.y - 80, 156, 66, 'Failed items', plain(summary.total_failed_items), this.danger);
+    this.card(this.margin + 352, this.y - 80, 156, 66, 'High-priority actions', plain(summary.high_priority_action_count), this.warning);
+    this.y -= 110;
+    this.bulletList([
+      `Audit reports: ${plain(summary.audit_report_count)}. Completion reports: ${plain(summary.completion_report_count)}.`,
+      `Average missed lists: ${plain(summary.avg_lists_missed_pct)}%. Average missed items: ${plain(summary.avg_items_missed_pct)}%.`,
+      `Repeated issues: ${plain(summary.total_repeated_issues)}. Open actions: ${plain(summary.open_action_count)}.`
+    ]);
+  }
+
+  private predictiveRisk() {
+    this.newPage('Predictive Risk');
+    this.table('Predictive Risk', asRecords(this.report.predictive_risk), [
+      { title: 'Location', width: 110, value: (row) => row.location_name },
+      { title: 'Current', width: 65, value: (row) => `${plain(row.current_risk_score)}/100` },
+      { title: 'Predicted', width: 74, value: (row) => `${plain(row.predicted_next_risk_score)}/100` },
+      { title: 'Level', width: 66, value: (row) => row.predicted_risk_level },
+      { title: 'Visit window', width: 110, value: (row) => row.recommended_visit_window },
+      { title: 'Reason', width: 170, value: (row) => row.prediction_reason, maxChars: 32 }
+    ], { maxRows: 16, subtitle: 'Forecasted risk based on current risk, critical findings, repeated failures, and checklist execution discipline.' });
+  }
+
+  private mlExplanation() {
+    this.newPage('ML Explanation');
+    this.table('ML Explanation - Top Drivers', asRecords(this.report.ml_explanations), [
+      { title: 'Location', width: 105, value: (row) => row.location_name },
+      { title: 'Driver', width: 130, value: (row) => row.driver_label },
+      { title: 'Group', width: 110, value: (row) => row.driver_group },
+      { title: 'Value', width: 52, value: (row) => row.actual_value },
+      { title: 'Impact', width: 58, value: (row) => `${plain(row.impact_points)} pts` },
+      { title: 'Explanation', width: 170, value: (row) => row.explanation, maxChars: 35 }
+    ], { maxRows: 22, subtitle: 'Transparent scoring drivers showing exactly why a location risk score increased.' });
+  }
+
+  private benchmarking() {
+    this.newPage('Benchmarking');
+    this.table('Location Benchmarking', asRecords(this.report.location_benchmarking), [
+      { title: 'Location', width: 120, value: (row) => row.location_name },
+      { title: 'Risk rank', width: 64, value: (row) => `#${plain(row.risk_rank_high_to_low)}` },
+      { title: 'Risk', width: 60, value: (row) => `${plain(row.risk_score)}/100` },
+      { title: 'Health', width: 60, value: (row) => `${plain(row.health_score)}/100` },
+      { title: 'Vs avg', width: 60, value: (row) => row.risk_vs_company_avg },
+      { title: 'Failed / Critical', width: 95, value: (row) => `${plain(row.failed_item_count)} / ${plain(row.critical_failed_item_count)}` }
+    ], { maxRows: 15 });
+
+    this.table('Category Benchmarking', asRecords(this.report.category_benchmarking), [
+      { title: 'Category', width: 155, value: (row) => row.risk_category },
+      { title: 'Rank', width: 55, value: (row) => `#${plain(row.category_failure_rank)}` },
+      { title: 'Failed', width: 60, value: (row) => row.total_failed_items },
+      { title: 'Critical', width: 60, value: (row) => row.total_critical_failed_items },
+      { title: 'Locations', width: 70, value: (row) => row.affected_location_count },
+      { title: 'Avg score', width: 70, value: (row) => `${plain(row.avg_item_score_pct)}%` }
+    ], { maxRows: 12 });
+  }
+
+  private actionPlan() {
+    this.newPage('Action Plan');
+    this.table('Priority Action Plan', asRecords(this.report.action_plan), [
+      { title: 'Priority', width: 58, value: (row) => row.severity },
+      { title: 'Location', width: 92, value: (row) => row.location_name },
+      { title: 'Finding', width: 180, value: (row) => row.action_title, maxChars: 36 },
+      { title: 'Due', width: 82, value: (row) => String(row.suggested_due_at ?? '').slice(0, 10) },
+      { title: 'Corrective action', width: 190, value: (row) => row.recommended_action, maxChars: 38 }
+    ], { maxRows: 28, subtitle: 'Actions are ranked by severity and due date. Critical actions require evidence.' });
+  }
+
+  private failedItems() {
+    this.newPage('Failed Item Details');
+    this.table('Failed Item Details', asRecords(this.report.failed_items), [
+      { title: 'Location', width: 90, value: (row) => row.location_name },
+      { title: 'Section', width: 110, value: (row) => row.section_name, maxChars: 22 },
+      { title: 'Failed control', width: 190, value: (row) => row.item_text, maxChars: 38 },
+      { title: 'Comment', width: 118, value: (row) => row.comment_text, maxChars: 24 },
+      { title: 'Action', width: 160, value: (row) => row.recommended_action, maxChars: 32 }
+    ], { maxRows: 28, subtitle: 'Detailed root-cause records imported from the report findings.' });
+  }
+
+  private toBlob() {
+    const objects: string[] = [];
+    objects.push('<< /Type /Catalog /Pages 2 0 R >>');
+    const pageObjectNumbers = this.pages.map((_, index) => 5 + index * 2);
+    objects.push(`<< /Type /Pages /Kids [${pageObjectNumbers.map((num) => `${num} 0 R`).join(' ')}] /Count ${this.pages.length} >>`);
+    objects.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+    objects.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>');
+
+    this.pages.forEach((page, pageIndex) => this.footer(pageIndex));
+
+    this.pages.forEach((page, pageIndex) => {
+      const pageObjectNumber = 5 + pageIndex * 2;
+      const contentObjectNumber = pageObjectNumber + 1;
+      const content = page.commands.join('\n');
+      objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${this.width} ${this.height}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentObjectNumber} 0 R >>`);
+      objects.push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
+    });
+
+    let pdf = '%PDF-1.4\n';
+    const offsets = [0];
+    objects.forEach((object, index) => {
+      offsets.push(pdf.length);
+      pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+    });
+    const xrefStart = pdf.length;
+    pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+    offsets.slice(1).forEach((offset) => {
+      pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
+    });
+    pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
+    return new Blob([pdf], { type: 'application/pdf' });
+  }
 }
 
 function buildManagementReportPdf(report: Record<string, unknown>) {
-  return makePdfBlob(buildManagementReportLines(report));
+  return new ProfessionalPdf(report).build();
 }
 
 export function AIAnalyticsPage() {
@@ -648,13 +863,14 @@ export function AIAnalyticsPage() {
             <div><p className="eyebrow">Management report export</p><h2>Executive PDF report</h2></div>
             <button className="primary-button" onClick={downloadManagementReport} disabled={!managementExport}><Download size={17} /> Download PDF</button>
           </div>
-          <p className="muted-text">The export now downloads directly as a PDF. It includes the executive summary, predictive risk, ML explanation, benchmarking, action plan, and failed item details.</p>
+          <p className="muted-text">The export downloads a professional PDF with a cover page, KPI cards, sectioned tables, page headers, and page numbers.</p>
           {managementExport ? (
             <div className="mini-grid">
-              <span><FileText size={15} /> PDF ready</span>
+              <span><FileText size={15} /> Pro PDF ready</span>
               <span><Building2 size={15} /> {clientDashboard?.location_count ?? '—'} locations</span>
               <span><AlertTriangle size={15} /> {clientDashboard?.total_critical_failures ?? 0} critical failures</span>
               <span><ListChecks size={15} /> {clientDashboard?.open_action_count ?? 0} actions</span>
+              <span><GitCompare size={15} /> Benchmarking included</span>
             </div>
           ) : (
             <span className="muted-text">No management report generated yet. Run Advanced ML v2 and refresh.</span>
