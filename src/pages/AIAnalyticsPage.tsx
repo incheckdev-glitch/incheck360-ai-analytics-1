@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { AlertTriangle, BarChart3, Brain, Building2, ClipboardCheck, Database, Download, Layers, ListChecks, Search, Sparkles, Target, TrendingUp } from 'lucide-react';
+import { AlertTriangle, BarChart3, Brain, Building2, ClipboardCheck, Database, Download, FileText, GitCompare, Layers, ListChecks, Search, Sparkles, Target, TrendingUp } from 'lucide-react';
 import { AIInsightCard } from '../components/AIInsightCard';
 import { MetricCard } from '../components/MetricCard';
 import { aiInsights as seedInsights, correctiveActions, incidents, locations, tasks } from '../data/mockData';
@@ -288,6 +288,154 @@ function severityClass(value: string | null | undefined) {
   return ['critical', 'high', 'medium', 'low'].includes(value ?? '') ? value as string : 'low';
 }
 
+function plain(value: unknown): string {
+  if (value === null || value === undefined) return '—';
+  return String(value).replace(/[\u2010-\u2015]/g, '-').replace(/[^\x20-\x7E]/g, ' ');
+}
+
+function asRecords(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item)) : [];
+}
+
+function wrapLine(text: string, max = 92): string[] {
+  const words = plain(text).split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let line = '';
+  words.forEach((word) => {
+    if (!line) {
+      line = word;
+      return;
+    }
+    if (`${line} ${word}`.length > max) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = `${line} ${word}`;
+    }
+  });
+  if (line) lines.push(line);
+  return lines.length ? lines : ['—'];
+}
+
+function pdfEscape(text: string): string {
+  return plain(text).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+}
+
+function section(lines: string[], title: string, rows: string[]) {
+  lines.push('', title.toUpperCase());
+  rows.forEach((row) => wrapLine(row).forEach((wrapped) => lines.push(wrapped)));
+}
+
+function buildManagementReportLines(report: Record<string, unknown>) {
+  const meta = (report.report_meta ?? {}) as Record<string, unknown>;
+  const summary = (report.executive_summary ?? {}) as Record<string, unknown>;
+  const predictions = asRecords(report.predictive_risk);
+  const explanations = asRecords(report.ml_explanations);
+  const locationBenchmarks = asRecords(report.location_benchmarking);
+  const categoryBenchmarks = asRecords(report.category_benchmarking);
+  const actions = asRecords(report.action_plan);
+  const failed = asRecords(report.failed_items);
+
+  const lines: string[] = [
+    'InCheck360 Management Report',
+    'Advanced Internal ML v2 - PDF Export',
+    `Organization: ${plain(meta.organization_id ?? summary.organization_id ?? organizationId)}`,
+    `Period: ${plain(meta.period_start ?? reportPeriodStart)} to ${plain(meta.period_end ?? reportPeriodEnd)}`,
+    `Generated: ${plain(meta.generated_at ?? new Date().toISOString())}`
+  ];
+
+  section(lines, 'Executive Summary', [
+    `Company: ${plain(summary.company_name ?? summary.organization_id ?? organizationId)}`,
+    `Locations: ${plain(summary.location_count)} | Audit reports: ${plain(summary.audit_report_count)} | Completion reports: ${plain(summary.completion_report_count)}`,
+    `Average risk: ${plain(summary.avg_risk_score)}/100 | Average health: ${plain(summary.avg_health_score)}/100`,
+    `Critical locations: ${plain(summary.critical_location_count)} | High risk locations: ${plain(summary.high_risk_location_count)}`,
+    `Failed items: ${plain(summary.total_failed_items)} | Critical failures: ${plain(summary.total_critical_failures)} | Repeated issues: ${plain(summary.total_repeated_issues)}`,
+    `Top risk category: ${plain(summary.top_risk_category)} (${plain(summary.top_category_failures)} failures)`,
+    `Open actions: ${plain(summary.open_action_count)} | High priority actions: ${plain(summary.high_priority_action_count)}`
+  ]);
+
+  section(lines, 'Predictive Risk', predictions.slice(0, 8).map((row, index) => (
+    `${index + 1}. ${plain(row.location_name)} - current risk ${plain(row.current_risk_score)}/100, predicted risk ${plain(row.predicted_next_risk_score)}/100 (${plain(row.predicted_risk_level)}). Visit window: ${plain(row.recommended_visit_window)}. Reason: ${plain(row.prediction_reason)}`
+  )));
+
+  section(lines, 'ML Explanation - Top Drivers', explanations.slice(0, 12).map((row, index) => (
+    `${index + 1}. ${plain(row.location_name)} - ${plain(row.driver_label)} (${plain(row.driver_group)}): ${plain(row.impact_points)} impact points. ${plain(row.explanation)}`
+  )));
+
+  section(lines, 'Location Benchmarking', locationBenchmarks.slice(0, 10).map((row, index) => (
+    `${index + 1}. ${plain(row.location_name)} - risk rank #${plain(row.risk_rank_high_to_low)}, risk ${plain(row.risk_score)}/100, health ${plain(row.health_score)}/100, vs company avg ${plain(row.risk_vs_company_avg)}.`
+  )));
+
+  section(lines, 'Category Benchmarking', categoryBenchmarks.slice(0, 10).map((row, index) => (
+    `${index + 1}. ${plain(row.risk_category)} - ${plain(row.total_failed_items)} failures, ${plain(row.total_critical_failed_items)} critical, ${plain(row.affected_location_count)} affected locations.`
+  )));
+
+  section(lines, 'Priority Action Plan', actions.slice(0, 20).map((row, index) => (
+    `${index + 1}. [${plain(row.severity)}] ${plain(row.location_name)} - ${plain(row.action_title)}. Due: ${plain(row.suggested_due_at)}. Action: ${plain(row.recommended_action)}`
+  )));
+
+  section(lines, 'Failed Item Details', failed.slice(0, 20).map((row, index) => (
+    `${index + 1}. [${plain(row.severity)}] ${plain(row.location_name)} / ${plain(row.section_name)} - ${plain(row.item_text)}. Comment: ${plain(row.comment_text)}. Action: ${plain(row.recommended_action)}`
+  )));
+
+  return lines;
+}
+
+function makePdfBlob(lines: string[]) {
+  const pageWidth = 595;
+  const pageHeight = 842;
+  const marginX = 48;
+  const startY = 790;
+  const maxLinesPerPage = 50;
+  const pages: string[][] = [];
+  for (let i = 0; i < lines.length; i += maxLinesPerPage) {
+    pages.push(lines.slice(i, i + maxLinesPerPage));
+  }
+
+  const objects: string[] = [];
+  objects.push('<< /Type /Catalog /Pages 2 0 R >>');
+  const pageObjectNumbers = pages.map((_, index) => 4 + index * 2);
+  objects.push(`<< /Type /Pages /Kids [${pageObjectNumbers.map((num) => `${num} 0 R`).join(' ')}] /Count ${pages.length} >>`);
+  objects.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+
+  pages.forEach((pageLines, pageIndex) => {
+    const pageObjectNumber = 4 + pageIndex * 2;
+    const contentObjectNumber = pageObjectNumber + 1;
+    const content = [
+      'BT',
+      '/F1 11 Tf',
+      '14 TL',
+      `${marginX} ${startY} Td`,
+      ...pageLines.flatMap((line, index) => {
+        const font = index === 0 && pageIndex === 0 ? '/F1 18 Tf' : index === 1 && pageIndex === 0 ? '/F1 12 Tf' : '/F1 10 Tf';
+        return [font, `(${pdfEscape(line)}) Tj`, 'T*'];
+      }),
+      'ET'
+    ].join('\n');
+    objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 3 0 R >> >> /Contents ${contentObjectNumber} 0 R >>`);
+    objects.push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
+  });
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(pdf.length);
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xrefStart = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += '0000000000 65535 f \n';
+  offsets.slice(1).forEach((offset) => {
+    pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
+  });
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
+  return new Blob([pdf], { type: 'application/pdf' });
+}
+
+function buildManagementReportPdf(report: Record<string, unknown>) {
+  return makePdfBlob(buildManagementReportLines(report));
+}
+
 export function AIAnalyticsPage() {
   const [activeTab, setActiveTab] = useState<TabId>('overview');
   const [severityFilter, setSeverityFilter] = useState<'all' | Severity>('all');
@@ -383,10 +531,18 @@ export function AIAnalyticsPage() {
       }
       if (!supabase) throw new Error('Supabase is not configured.');
 
-      const { data, error } = await supabase.rpc('run_advanced_report_ml_v2', { p_organization_id: organizationId, p_period_start: reportPeriodStart, p_period_end: reportPeriodEnd });
+      const { data, error } = await supabase.rpc('run_advanced_report_ml_v2', {
+        p_organization_id: organizationId,
+        p_period_start: reportPeriodStart,
+        p_period_end: reportPeriodEnd
+      });
 
       if (error) {
-        const fallback = await supabase.rpc('run_advanced_report_ml', { p_organization_id: organizationId, p_period_start: reportPeriodStart, p_period_end: reportPeriodEnd });
+        const fallback = await supabase.rpc('run_advanced_report_ml', {
+          p_organization_id: organizationId,
+          p_period_start: reportPeriodStart,
+          p_period_end: reportPeriodEnd
+        });
         if (fallback.error) {
           const edgeResult = await invokeAIGenerateInsights({ organization_id: organizationId, run_type: 'manual' });
           setMessage(`Fallback ML completed. Rows scored: ${edgeResult?.rows_scored ?? 0}. Insights created: ${edgeResult?.insights_created ?? 0}. Run the v2 SQL for explanation and predictive risk.`);
@@ -406,22 +562,27 @@ export function AIAnalyticsPage() {
 
   function downloadManagementReport() {
     if (!managementExport) return;
-    const blob = new Blob([JSON.stringify(managementExport, null, 2)], { type: 'application/json' });
+    const blob = buildManagementReportPdf(managementExport);
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `incheck360-management-report-${organizationId}-${reportPeriodStart}-${reportPeriodEnd}.json`;
+    link.download = `incheck360-management-report-${organizationId}-${reportPeriodStart}-${reportPeriodEnd}.pdf`;
     document.body.appendChild(link);
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
   }
 
-  const filteredInsights = useMemo(() => severityFilter === 'all' ? insights : insights.filter((insight) => insight.severity === severityFilter), [severityFilter, insights]);
+  const filteredInsights = useMemo(
+    () => severityFilter === 'all' ? insights : insights.filter((insight) => insight.severity === severityFilter),
+    [severityFilter, insights]
+  );
+
   const search = searchText.trim().toLowerCase();
   const filteredFailedItems = failedItems.filter((row) => !search || `${row.location_name} ${row.item_text} ${row.section_name} ${row.risk_category} ${row.comment_text}`.toLowerCase().includes(search));
   const filteredActions = actionRows.filter((row) => !search || `${row.location_name} ${row.action_title} ${row.risk_category} ${row.recommended_action}`.toLowerCase().includes(search));
   const filteredExplanations = explanations.filter((row) => !search || `${row.location_name} ${row.driver_label} ${row.driver_group} ${row.explanation}`.toLowerCase().includes(search));
+
   const avgRisk = locationsMl.length ? locationsMl.reduce((sum, row) => sum + Number(row.risk_score ?? 0), 0) / locationsMl.length : null;
   const avgHealth = locationsMl.length ? locationsMl.reduce((sum, row) => sum + Number(row.health_score ?? 0), 0) / locationsMl.length : null;
   const criticalLocations = locationsMl.filter((row) => row.risk_level === 'critical').length;
@@ -481,8 +642,43 @@ export function AIAnalyticsPage() {
       {activeTab === 'repeated' && <DataTable rows={repeatedIssues} empty="No repeated issues found yet." columns={[["Repeated issue", (r: RepeatedIssueRow) => <><strong>{r.example_item_text}</strong><span>{r.location_name}</span></>], ["Level", (r) => <span className={`severity-badge ${severityClass(r.repeated_issue_level)}`}>{r.repeated_issue_level}</span>], ["Category", (r) => r.risk_category ?? 'general'], ["Repeat count", (r) => `${r.repeat_count ?? 0}`], ["Critical repeats", (r) => `${r.critical_repeat_count ?? 0}`], ["Sections", (r) => (r.affected_sections ?? []).join(', ') || '—']]} />}
       {activeTab === 'actions' && <DataTable rows={filteredActions} empty="No action plan rows found." columns={[["Action", (r: ActionRow) => <><strong>{r.action_title}</strong><span>{r.action_reference} · {r.location_name}</span></>], ["Priority", (r) => <span className={`severity-badge ${severityClass(r.severity)}`}>{r.severity}</span>], ["Category", (r) => r.risk_category ?? 'general'], ["Section", (r) => r.section_name ?? '—'], ["Recommendation", (r) => r.recommended_action ?? '—'], ["Due", (r) => date(r.suggested_due_at)], ["Evidence", (r) => r.evidence_required ? 'Required' : 'Optional']]} />}
 
-      {activeTab === 'management' && <section className="card"><div className="section-header"><div><p className="eyebrow">Management report export</p><h2>Executive JSON payload</h2></div><button className="primary-button" onClick={downloadManagementReport} disabled={!managementExport}><Download size={17} /> Download JSON</button></div><p className="muted-text">This payload contains executive summary, benchmarking, predictions, explanations, action plan, failed items, and repeated issues. It can be used later for PDF or Excel generation.</p><pre className="code-block">{managementExport ? JSON.stringify(managementExport, null, 2) : 'No management export generated yet. Run the v2 SQL and refresh.'}</pre></section>}
-      {activeTab === 'insights' && <><section className="toolbar-card"><div className="row gap-sm wrap">{(['all', 'critical', 'high', 'medium', 'low'] as Array<'all' | Severity>).map((severity) => <button key={severity} className={`filter-button ${severityFilter === severity ? 'active' : ''}`} onClick={() => setSeverityFilter(severity)}>{severity}</button>)}</div></section><section className="insights-grid">{filteredInsights.map((insight) => <AIInsightCard key={insight.id} insight={insight} />)}{!filteredInsights.length && actionRows.slice(0, 6).map((action) => <article className="insight-card high" key={action.action_reference}><div className="insight-header"><span className={`severity-badge ${severityClass(action.severity)}`}>{action.severity}</span><span className="pill muted">deterministic ML</span></div><h3>{action.action_title}</h3><p>{action.finding_comment || 'Imported report finding requires action.'}</p><div className="recommendation-box"><Sparkles size={15} /> {action.recommended_action}</div><div className="insight-footer"><span>{action.location_name}</span><span>Due {date(action.suggested_due_at)}</span></div></article>)}</section></>}
+      {activeTab === 'management' && (
+        <section className="card">
+          <div className="section-header">
+            <div><p className="eyebrow">Management report export</p><h2>Executive PDF report</h2></div>
+            <button className="primary-button" onClick={downloadManagementReport} disabled={!managementExport}><Download size={17} /> Download PDF</button>
+          </div>
+          <p className="muted-text">The export now downloads directly as a PDF. It includes the executive summary, predictive risk, ML explanation, benchmarking, action plan, and failed item details.</p>
+          {managementExport ? (
+            <div className="mini-grid">
+              <span><FileText size={15} /> PDF ready</span>
+              <span><Building2 size={15} /> {clientDashboard?.location_count ?? '—'} locations</span>
+              <span><AlertTriangle size={15} /> {clientDashboard?.total_critical_failures ?? 0} critical failures</span>
+              <span><ListChecks size={15} /> {clientDashboard?.open_action_count ?? 0} actions</span>
+            </div>
+          ) : (
+            <span className="muted-text">No management report generated yet. Run Advanced ML v2 and refresh.</span>
+          )}
+        </section>
+      )}
+
+      {activeTab === 'insights' && (
+        <>
+          <section className="toolbar-card"><div className="row gap-sm wrap">{(['all', 'critical', 'high', 'medium', 'low'] as Array<'all' | Severity>).map((severity) => <button key={severity} className={`filter-button ${severityFilter === severity ? 'active' : ''}`} onClick={() => setSeverityFilter(severity)}>{severity}</button>)}</div></section>
+          <section className="insights-grid">
+            {filteredInsights.map((insight) => <AIInsightCard key={insight.id} insight={insight} />)}
+            {!filteredInsights.length && actionRows.slice(0, 6).map((action) => (
+              <article className="insight-card high" key={action.action_reference}>
+                <div className="insight-header"><span className={`severity-badge ${severityClass(action.severity)}`}>{action.severity}</span><span className="pill muted">deterministic ML</span></div>
+                <h3>{action.action_title}</h3>
+                <p>{action.finding_comment || 'Imported report finding requires action.'}</p>
+                <div className="recommendation-box"><Sparkles size={15} /> {action.recommended_action}</div>
+                <div className="insight-footer"><span>{action.location_name}</span><span>Due {date(action.suggested_due_at)}</span></div>
+              </article>
+            ))}
+          </section>
+        </>
+      )}
       {activeTab === 'raw' && <div className="two-column"><section className="card"><div className="section-header"><div><p className="eyebrow">Raw audit reports</p><h2>Imported audits</h2></div><Database size={20} /></div><SimpleRawAudit rows={rawAudits} /></section><section className="card"><div className="section-header"><div><p className="eyebrow">Raw completion reports</p><h2>Imported completion</h2></div><Database size={20} /></div><SimpleRawCompletion rows={rawCompletions} /></section></div>}
     </div>
   );
