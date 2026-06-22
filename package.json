@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "lint:types": "tsc --noEmit"
+    "lint:types": "tsc --noEmit",
+    "start": "vite --host 0.0.0.0",
+    "build:preview": "npm run build && npm run preview"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",

@@ -39,13 +39,38 @@ This version uses **internal ML** only.
 
 ## Quick start
 
+Do not double-click the source `index.html`. This is a Vite + React app and must run through Vite.
+
 ```bash
 npm install
 cp .env.example .env
 npm run dev
 ```
 
+Open the URL shown in terminal, usually:
+
+```text
+http://localhost:5173
+```
+
 The app runs with built-in mock data first. You can test the internal ML from the AI Analytics page by clicking **Run Internal ML**.
+
+## Production preview
+
+```bash
+npm run build
+npm run preview
+```
+
+Open:
+
+```text
+http://localhost:4173
+```
+
+## Blank screen note
+
+If you see a blank screen, you are probably opening `index.html` directly or deploying without building the app. See `docs/BLANK_SCREEN_FIX.md`.
 
 ## Environment variables
 
