@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Activity, AlertTriangle, BarChart3, BookOpen, Brain, Building2, CheckSquare, ClipboardCheck, Home, ListTodo, Settings } from 'lucide-react';
+import { Activity, AlertTriangle, BookOpen, Brain, Building2, CheckSquare, ClipboardCheck, Home, ListTodo, Settings } from 'lucide-react';
 import { AIAnalyticsPage } from './pages/AIAnalyticsPage';
 import { ChecklistsPage } from './pages/ChecklistsPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -7,6 +7,7 @@ import { IncidentsPage } from './pages/IncidentsPage';
 import { LocationsPage } from './pages/LocationsPage';
 import { ReferenceMaterialsPage } from './pages/ReferenceMaterialsPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { TasksPage } from './pages/TasksPage';
 import { aiInsights, checklistTemplates, correctiveActions, incidents, locations, tasks } from './data/mockData';
 import { calculateDashboardMetrics } from './lib/analytics';
 import { useMockData } from './lib/supabase';
