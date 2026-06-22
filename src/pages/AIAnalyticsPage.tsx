@@ -1,20 +1,78 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Brain, Filter, Sparkles } from 'lucide-react';
 import { AIInsightCard } from '../components/AIInsightCard';
 import { MetricCard } from '../components/MetricCard';
 import { aiInsights as seedInsights, correctiveActions, incidents, locations, tasks } from '../data/mockData';
 import { generateInternalMlInsights } from '../lib/internalMl';
-import { invokeAIGenerateInsights, useMockData } from '../lib/supabase';
+import { invokeAIGenerateInsights, supabase, useMockData } from '../lib/supabase';
 import type { AIInsight, Severity } from '../lib/types';
 
 const severities: Array<'all' | Severity> = ['all', 'critical', 'high', 'medium', 'low'];
-const demoOrganizationId = '00000000-0000-0000-0000-000000000001';
+const defaultOrganizationId = '00000000-0000-0000-0000-000000000001';
+const organizationId = (import.meta.env.VITE_ORGANIZATION_ID as string | undefined) || defaultOrganizationId;
+
+function toEvidenceStrings(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => {
+    if (typeof item === 'string') return item;
+    try {
+      return JSON.stringify(item);
+    } catch {
+      return String(item);
+    }
+  });
+}
+
+function mapSupabaseInsight(row: Record<string, unknown>): AIInsight {
+  return {
+    id: String(row.insight_id),
+    module: (row.module as AIInsight['module']) || 'compliance',
+    title: String(row.title ?? 'AI insight'),
+    summary: String(row.summary ?? ''),
+    recommendation: String(row.recommendation ?? ''),
+    severity: (row.severity as Severity) || 'medium',
+    confidence: Number(row.confidence ?? 0.7),
+    status: (row.status as AIInsight['status']) || 'new',
+    locationId: row.location_id ? String(row.location_id) : undefined,
+    locationName: row.entity_reference ? String(row.entity_reference) : undefined,
+    evidence: toEvidenceStrings(row.evidence),
+    generatedAt: String(row.generated_at ?? row.created_at ?? new Date().toISOString())
+  };
+}
 
 export function AIAnalyticsPage() {
   const [severityFilter, setSeverityFilter] = useState<'all' | Severity>('all');
   const [insights, setInsights] = useState<AIInsight[]>(seedInsights);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationMessage, setGenerationMessage] = useState<string | null>(null);
+
+  async function loadLiveInsights() {
+    if (useMockData || !supabase) return;
+
+    const { data, error } = await supabase
+      .from('ai_insights')
+      .select('insight_id,module,title,summary,recommendation,severity,confidence,status,location_id,entity_reference,evidence,generated_at,created_at')
+      .eq('organization_id', organizationId)
+      .order('generated_at', { ascending: false })
+      .limit(50);
+
+    if (error) {
+      setGenerationMessage(`Supabase connected, but insights could not load: ${error.message}`);
+      return;
+    }
+
+    if (data && data.length > 0) {
+      setInsights(data.map((row) => mapSupabaseInsight(row as Record<string, unknown>)));
+      setGenerationMessage(null);
+    } else {
+      setInsights([]);
+      setGenerationMessage('Supabase connected. No AI insights found yet. Run Internal ML to generate the first insights.');
+    }
+  }
+
+  useEffect(() => {
+    void loadLiveInsights();
+  }, []);
 
   const filteredInsights = useMemo(
     () => severityFilter === 'all' ? insights : insights.filter((insight) => insight.severity === severityFilter),
@@ -37,8 +95,9 @@ export function AIAnalyticsPage() {
         return;
       }
 
-      const result = await invokeAIGenerateInsights({ organization_id: demoOrganizationId, run_type: 'manual' });
-      setGenerationMessage(`Internal ML run completed. Rows scored: ${result.rows_scored ?? 0}. Insights created: ${result.insights_created ?? 0}.`);
+      const result = await invokeAIGenerateInsights({ organization_id: organizationId, run_type: 'manual' });
+      setGenerationMessage(`Internal ML run completed. Rows scored: ${result?.rows_scored ?? 0}. Insights created: ${result?.insights_created ?? 0}.`);
+      await loadLiveInsights();
     } catch (error) {
       setGenerationMessage(error instanceof Error ? error.message : 'Internal ML generation failed.');
     } finally {
