@@ -21,7 +21,7 @@ const navItems = [
   { id: 'tasks' as const, label: 'Tasks', icon: ListTodo },
   { id: 'incidents' as const, label: 'Incidents', icon: AlertTriangle },
   { id: 'reference' as const, label: 'Reference Materials', icon: BookOpen },
-  { id: 'ai' as const, label: 'AI Analytics', icon: Brain },
+  { id: 'ai' as const, label: 'Audit Advanced Report', icon: Brain },
   { id: 'settings' as const, label: 'Settings', icon: Settings }
 ];
 
@@ -64,7 +64,7 @@ function App() {
           </div>
           <div>
             <strong>InCheck360</strong>
-            <span>AI Analytics 1</span>
+            <span>Audit Advanced Report</span>
           </div>
         </div>
 
@@ -89,8 +89,8 @@ function App() {
           <strong>{useMockData ? 'Mock mode' : 'Supabase connected'}</strong>
           <p>
             {useMockData
-              ? 'Set Vercel Supabase variables and redeploy to use live data.'
-              : 'Live database mode is enabled. Internal ML will use Supabase data.'}
+              ? 'Set Vercel Supabase variables and redeploy to use live audit report data.'
+              : 'Live database mode is enabled. The audit advanced report engine will use imported Supabase report data.'}
           </p>
         </div>
       </aside>
