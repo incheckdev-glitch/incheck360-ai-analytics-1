@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { AlertTriangle, BarChart3, Brain, ClipboardCheck, Database, Layers, ListChecks, Search, Sparkles, Target } from 'lucide-react';
+import { AlertTriangle, BarChart3, Brain, ClipboardCheck, Database, Filter, Layers, ListChecks, Search, Sparkles, Target } from 'lucide-react';
 import { AIInsightCard } from '../components/AIInsightCard';
 import { MetricCard } from '../components/MetricCard';
 import { aiInsights as seedInsights, correctiveActions, incidents, locations, tasks } from '../data/mockData';
