@@ -6,7 +6,7 @@ export function SettingsPage() {
       <section className="card">
         <p className="eyebrow">Admin settings</p>
         <h2>Platform configuration</h2>
-        <p>Configure organizations, roles, locations, schedules, checklist governance, and AI settings.</p>
+        <p>Configure organizations, roles, locations, schedules, checklist governance, and internal ML settings.</p>
       </section>
 
       <section className="template-grid">
@@ -22,8 +22,8 @@ export function SettingsPage() {
         </article>
         <article className="card">
           <div className="metric-icon"><KeyRound /></div>
-          <h3>AI configuration</h3>
-          <p>OpenAI keys stay in Supabase Edge Function secrets. The frontend never receives them.</p>
+          <h3>Internal ML configuration</h3>
+          <p>Configure feature weights, score thresholds, escalation rules, and model runs. No OpenAI key is required.</p>
         </article>
       </section>
     </div>

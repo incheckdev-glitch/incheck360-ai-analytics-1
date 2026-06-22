@@ -43,7 +43,7 @@ button { cursor: pointer; }
 .topbar-actions { display: flex; align-items: center; gap: 10px; }
 
 .page-stack { display: grid; gap: 20px; }
-.hero-card, .toolbar-card, .card { background: rgba(255,255,255,.88); border: 1px solid var(--line); border-radius: 24px; box-shadow: var(--shadow); }
+.hero-card, .toolbar-card, .card, .notice-card { background: rgba(255,255,255,.88); border: 1px solid var(--line); border-radius: 24px; box-shadow: var(--shadow); }
 .hero-card { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 28px; overflow: hidden; position: relative; }
 .hero-card h2 { font-size: 34px; max-width: 760px; margin: 0 0 10px; letter-spacing: -.04em; }
 .hero-card p { max-width: 760px; color: var(--muted); line-height: 1.65; margin: 0; }
@@ -52,6 +52,8 @@ button { cursor: pointer; }
 .hero-stats span { color: #cbd5e1; }
 .card { padding: 20px; }
 .toolbar-card { display: flex; justify-content: space-between; align-items: center; padding: 16px; gap: 12px; }
+.notice-card { padding: 14px 18px; color: var(--text); line-height: 1.55; }
+
 
 .metric-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; }
 .metric-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }

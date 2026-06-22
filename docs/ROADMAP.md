@@ -5,8 +5,8 @@
 - React dashboard
 - Mock data
 - Supabase schema
-- AI Edge Functions
-- Basic AI insights page
+- Internal ML Edge Function
+- Basic internal insights page
 
 ## Phase 2: Real data
 
@@ -25,15 +25,24 @@
 - Push notifications
 - Sync queue
 
-## Phase 4: AI analytics
+## Phase 4: Internal ML analytics
 
-- Daily AI runs
+- Daily internal ML runs
+- Configurable feature weights
+- Location risk trend charts
 - Manager feedback
-- SOP-based AI chat
-- Risk trend charts
 - Cross-location benchmarking
+- False-positive review workflow
 
-## Phase 5: Enterprise
+## Phase 5: True predictive model
+
+- Export historical training dataset
+- Train private model on failed audits, incidents, and overdue actions
+- Model registry and versioning
+- Compare model accuracy against rule scoring
+- Private prediction service
+
+## Phase 6: Enterprise
 
 - Multi-brand hierarchy
 - Audit exports

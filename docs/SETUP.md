@@ -13,7 +13,7 @@ cp .env.example .env
 npm run dev
 ```
 
-The app uses mock data by default.
+The app uses mock data by default. Open the AI Analytics page and click **Run Internal ML**.
 
 ## 3. Connect Supabase later
 
@@ -31,22 +31,23 @@ VITE_SUPABASE_ANON_KEY="your-anon-key"
 VITE_USE_MOCK_DATA="false"
 ```
 
-## 4. Deploy Edge Functions
+## 4. Deploy Edge Function
 
 ```bash
 supabase functions deploy ai-generate-insights
-supabase functions deploy ai-chat-ops
-supabase functions deploy ai-embed-knowledge
 ```
 
 Set secrets:
 
 ```bash
-supabase secrets set OPENAI_API_KEY="your-openai-key"
 supabase secrets set SUPABASE_SERVICE_ROLE_KEY="your-service-role-key"
 supabase secrets set SUPABASE_URL="https://your-project.supabase.co"
 ```
 
+No OpenAI key is needed.
+
 ## 5. Security
 
-Never expose `OPENAI_API_KEY` or `SUPABASE_SERVICE_ROLE_KEY` in frontend code.
+Never expose `SUPABASE_SERVICE_ROLE_KEY` in frontend code.
+
+Before production, add RLS policies for every table and restrict insights by organization/location role.

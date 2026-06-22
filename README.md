@@ -2,7 +2,16 @@
 
 Standalone operations-execution and compliance platform prototype for multi-location businesses.
 
-This repository is **not the ERP**. It is a fresh platform concept similar in category to digital operations tools: checklist execution, audits, SOP/reference materials, incidents, corrective actions, location performance, and AI analytics.
+This repository is **not the ERP**. It is a fresh platform concept similar to Zenput / Crunchtime Ops Execution: checklist execution, audits, SOP/reference materials, incidents, corrective actions, location performance, and internal ML analytics.
+
+## Important change
+
+This version uses **internal ML** only.
+
+- No OpenAI API key required
+- No external AI API required
+- AI Analytics is generated using local feature engineering, rule scoring, risk weights, and Supabase Edge Functions
+- The app can run in mock mode first, then connect to Supabase later
 
 ## What is included
 
@@ -10,9 +19,11 @@ This repository is **not the ERP**. It is a fresh platform concept similar in ca
 - Responsive dashboard UI
 - Mock data mode for instant local preview
 - Supabase-ready database migrations
-- Supabase Edge Functions for AI insight generation and AI ops chat
-- Backend-only OpenAI integration pattern
-- AI prompts and product documentation
+- Internal ML scoring tables
+- Supabase Edge Function: `ai-generate-insights`
+- Internal location risk scoring
+- Internal compliance / evidence risk detection
+- Docs for setup, security, and ML roadmap
 
 ## Main modules
 
@@ -23,7 +34,7 @@ This repository is **not the ERP**. It is a fresh platform concept similar in ca
 - Incidents
 - Corrective Actions
 - Reference Materials
-- AI Analytics
+- AI Analytics / Internal ML
 - Admin Settings
 
 ## Quick start
@@ -34,29 +45,27 @@ cp .env.example .env
 npm run dev
 ```
 
-The app runs with built-in mock data first. You can connect Supabase later by adding your project URL and anon key in `.env`.
+The app runs with built-in mock data first. You can test the internal ML from the AI Analytics page by clicking **Run Internal ML**.
 
 ## Environment variables
 
 Frontend:
 
 ```bash
-VITE_SUPABASE_URL=
-VITE_SUPABASE_ANON_KEY=
-VITE_USE_MOCK_DATA=true
+VITE_APP_NAME="InCheck360 AI Analytics 1"
+VITE_SUPABASE_URL=""
+VITE_SUPABASE_ANON_KEY=""
+VITE_USE_MOCK_DATA="true"
 ```
 
-Supabase Edge Function secrets:
+Supabase Edge Function secrets when you connect the backend:
 
 ```bash
-OPENAI_API_KEY=
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 ```
 
-## Important security rule
-
-The frontend must never call OpenAI directly. All AI requests must go through Supabase Edge Functions.
+There is intentionally no `OPENAI_API_KEY` in this project.
 
 ## Suggested GitHub repo name
 
