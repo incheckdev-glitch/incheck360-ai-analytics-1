@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { AlertTriangle, BarChart3, Brain, Building2, ClipboardCheck, Database, Download, FileText, GitCompare, Layers, ListChecks, Search, Sparkles, Target, TrendingUp } from 'lucide-react';
+import { AlertTriangle, Brain, Building2, Database, Download, FileText, GitCompare, ListChecks, Search, Sparkles, Target, TrendingUp } from 'lucide-react';
 import { MetricCard } from '../components/MetricCard';
 import { supabase, useMockData } from '../lib/supabase';
 
@@ -131,28 +131,29 @@ export function AIAnalyticsPage() {
   const [running, setRunning] = useState(false);
 
   async function load() {
-    if (useMockData || !supabase) return;
+    const db = supabase;
+    if (useMockData || !db) return;
     setLoading(true);
     const errors: string[] = [];
     try {
       const results = await Promise.all([
-        fetchRows('v_client_company_dashboard', supabase.from('v_client_company_dashboard').select('*').eq('organization_id', organizationId).limit(20)),
-        fetchRows('v_advanced_report_location_analytics', supabase.from('v_advanced_report_location_analytics').select('*').eq('organization_id', organizationId).order('risk_score', { ascending: false }).limit(100)),
-        fetchRows('v_ml_explanation_driver_breakdown', supabase.from('v_ml_explanation_driver_breakdown').select('*').eq('organization_id', organizationId).order('impact_points', { ascending: false }).limit(300)),
-        fetchRows('v_predictive_location_risk', supabase.from('v_predictive_location_risk').select('*').eq('organization_id', organizationId).order('predicted_next_risk_score', { ascending: false }).limit(100)),
-        fetchRows('v_location_benchmarking', supabase.from('v_location_benchmarking').select('*').eq('organization_id', organizationId).order('risk_rank_high_to_low', { ascending: true }).limit(100)),
-        fetchRows('v_category_benchmarking', supabase.from('v_category_benchmarking').select('*').eq('organization_id', organizationId).order('category_failure_rank', { ascending: true }).limit(100)),
-        fetchRows('v_section_benchmarking', supabase.from('v_section_benchmarking').select('*').eq('organization_id', organizationId).order('weakest_section_rank', { ascending: true }).limit(100)),
-        fetchRows('v_advanced_report_category_analytics', supabase.from('v_advanced_report_category_analytics').select('*').eq('organization_id', organizationId).order('failed_item_count', { ascending: false }).limit(100)),
-        fetchRows('v_advanced_report_section_analytics', supabase.from('v_advanced_report_section_analytics').select('*').eq('organization_id', organizationId).order('avg_section_score_pct', { ascending: true }).limit(100)),
-        fetchRows('v_advanced_report_failed_items', supabase.from('v_advanced_report_failed_items').select('*').eq('organization_id', organizationId).order('is_critical', { ascending: false }).order('completed_at', { ascending: false }).limit(250)),
-        fetchRows('v_advanced_report_repeated_issues', supabase.from('v_advanced_report_repeated_issues').select('*').eq('organization_id', organizationId).order('repeat_count', { ascending: false }).limit(100)),
-        fetchRows('v_advanced_report_action_plan', supabase.from('v_advanced_report_action_plan').select('*').eq('organization_id', organizationId).order('priority_rank', { ascending: true }).limit(150)),
-        fetchRows('audit_reports', supabase.from('audit_reports').select('audit_report_id,checklist_name,location_name_text,score_percentage,score_earned,score_total,instance_status,completed_at,submitted_by_name').eq('organization_id', organizationId).order('completed_at', { ascending: false }).limit(80)),
-        fetchRows('completion_rate_reports', supabase.from('completion_rate_reports').select('completion_report_id,location_name_text,date_range_start,date_range_end,lists_completed_pct,lists_missed_pct,items_completed_pct,items_missed_pct').eq('organization_id', organizationId).order('date_range_end', { ascending: false }).limit(80)),
-        fetchRows('ai_insights', supabase.from('ai_insights').select('insight_id,title,summary,recommendation,severity,confidence,status,entity_reference,generated_at').eq('organization_id', organizationId).order('generated_at', { ascending: false }).limit(80)),
-        fetchRows('v_analytics_data_lineage', supabase.from('v_analytics_data_lineage').select('*').eq('organization_id', organizationId).order('sort_order', { ascending: true })),
-        fetchRows('analytics_generation_runs', supabase.from('analytics_generation_runs').select('*').eq('organization_id', organizationId).order('started_at', { ascending: false }).limit(20))
+        fetchRows('v_client_company_dashboard', db.from('v_client_company_dashboard').select('*').eq('organization_id', organizationId).limit(20)),
+        fetchRows('v_advanced_report_location_analytics', db.from('v_advanced_report_location_analytics').select('*').eq('organization_id', organizationId).order('risk_score', { ascending: false }).limit(100)),
+        fetchRows('v_ml_explanation_driver_breakdown', db.from('v_ml_explanation_driver_breakdown').select('*').eq('organization_id', organizationId).order('impact_points', { ascending: false }).limit(300)),
+        fetchRows('v_predictive_location_risk', db.from('v_predictive_location_risk').select('*').eq('organization_id', organizationId).order('predicted_next_risk_score', { ascending: false }).limit(100)),
+        fetchRows('v_location_benchmarking', db.from('v_location_benchmarking').select('*').eq('organization_id', organizationId).order('risk_rank_high_to_low', { ascending: true }).limit(100)),
+        fetchRows('v_category_benchmarking', db.from('v_category_benchmarking').select('*').eq('organization_id', organizationId).order('category_failure_rank', { ascending: true }).limit(100)),
+        fetchRows('v_section_benchmarking', db.from('v_section_benchmarking').select('*').eq('organization_id', organizationId).order('weakest_section_rank', { ascending: true }).limit(100)),
+        fetchRows('v_advanced_report_category_analytics', db.from('v_advanced_report_category_analytics').select('*').eq('organization_id', organizationId).order('failed_item_count', { ascending: false }).limit(100)),
+        fetchRows('v_advanced_report_section_analytics', db.from('v_advanced_report_section_analytics').select('*').eq('organization_id', organizationId).order('avg_section_score_pct', { ascending: true }).limit(100)),
+        fetchRows('v_advanced_report_failed_items', db.from('v_advanced_report_failed_items').select('*').eq('organization_id', organizationId).order('is_critical', { ascending: false }).order('completed_at', { ascending: false }).limit(250)),
+        fetchRows('v_advanced_report_repeated_issues', db.from('v_advanced_report_repeated_issues').select('*').eq('organization_id', organizationId).order('repeat_count', { ascending: false }).limit(100)),
+        fetchRows('v_advanced_report_action_plan', db.from('v_advanced_report_action_plan').select('*').eq('organization_id', organizationId).order('priority_rank', { ascending: true }).limit(150)),
+        fetchRows('audit_reports', db.from('audit_reports').select('audit_report_id,checklist_name,location_name_text,score_percentage,score_earned,score_total,instance_status,completed_at,submitted_by_name').eq('organization_id', organizationId).order('completed_at', { ascending: false }).limit(80)),
+        fetchRows('completion_rate_reports', db.from('completion_rate_reports').select('completion_report_id,location_name_text,date_range_start,date_range_end,lists_completed_pct,lists_missed_pct,items_completed_pct,items_missed_pct').eq('organization_id', organizationId).order('date_range_end', { ascending: false }).limit(80)),
+        fetchRows('ai_insights', db.from('ai_insights').select('insight_id,title,summary,recommendation,severity,confidence,status,entity_reference,generated_at').eq('organization_id', organizationId).order('generated_at', { ascending: false }).limit(80)),
+        fetchRows('v_analytics_data_lineage', db.from('v_analytics_data_lineage').select('*').eq('organization_id', organizationId).order('sort_order', { ascending: true })),
+        fetchRows('analytics_generation_runs', db.from('analytics_generation_runs').select('*').eq('organization_id', organizationId).order('started_at', { ascending: false }).limit(20))
       ]);
 
       results.forEach((result) => {
@@ -191,22 +192,24 @@ export function AIAnalyticsPage() {
   }, []);
 
   async function runMl() {
-    if (!supabase) return;
+    const db = supabase;
+    if (!db) return;
     setRunning(true);
     setMessage(null);
     try {
       const attempts = [
-        () => supabase.rpc('run_advanced_report_ml_v3', { p_organization_id: organizationId, p_period_start: periodStart, p_period_end: periodEnd, p_triggered_by: 'frontend:AIAnalyticsPage' }),
-        () => supabase.rpc('run_advanced_report_ml_v2', { p_organization_id: organizationId, p_period_start: periodStart, p_period_end: periodEnd }),
-        () => supabase.rpc('run_advanced_report_ml', { p_organization_id: organizationId, p_period_start: periodStart, p_period_end: periodEnd }),
-        () => supabase.rpc('run_internal_ml_from_imported_reports', { p_organization_id: organizationId, p_period_start: periodStart, p_period_end: periodEnd })
+        () => db.rpc('run_advanced_report_ml_v3', { p_organization_id: organizationId, p_period_start: periodStart, p_period_end: periodEnd, p_triggered_by: 'frontend:AIAnalyticsPage' }),
+        () => db.rpc('run_advanced_report_ml_v2', { p_organization_id: organizationId, p_period_start: periodStart, p_period_end: periodEnd }),
+        () => db.rpc('run_advanced_report_ml', { p_organization_id: organizationId, p_period_start: periodStart, p_period_end: periodEnd }),
+        () => db.rpc('run_internal_ml_from_imported_reports', { p_organization_id: organizationId, p_period_start: periodStart, p_period_end: periodEnd })
       ];
       let lastError = '';
       for (const attempt of attempts) {
         const { data, error } = await attempt();
         if (!error) {
           const row = Array.isArray(data) && data.length ? data[0] : {};
-          setMessage(`ML finished. Raw rows: ${row.raw_rows_scanned ?? '—'}. Features: ${row.generated_feature_rows ?? Array.isArray(data) ? data.length : '—'}. Refreshing dashboard...`);
+          const generatedFeatures = row.generated_feature_rows ?? (Array.isArray(data) ? data.length : '—');
+          setMessage(`ML finished. Raw rows: ${row.raw_rows_scanned ?? '—'}. Features: ${generatedFeatures}. Refreshing dashboard...`);
           await load();
           return;
         }
