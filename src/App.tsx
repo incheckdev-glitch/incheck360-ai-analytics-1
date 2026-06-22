@@ -7,9 +7,9 @@ import { IncidentsPage } from './pages/IncidentsPage';
 import { LocationsPage } from './pages/LocationsPage';
 import { ReferenceMaterialsPage } from './pages/ReferenceMaterialsPage';
 import { SettingsPage } from './pages/SettingsPage';
-import { TasksPage } from './pages/TasksPage';
 import { aiInsights, checklistTemplates, correctiveActions, incidents, locations, tasks } from './data/mockData';
 import { calculateDashboardMetrics } from './lib/analytics';
+import { useMockData } from './lib/supabase';
 
 export type AppPage = 'dashboard' | 'locations' | 'checklists' | 'tasks' | 'incidents' | 'reference' | 'ai' | 'settings';
 
@@ -85,8 +85,12 @@ function App() {
 
         <div className="sidebar-card">
           <CheckSquare size={18} />
-          <strong>Mock mode</strong>
-          <p>Connect Supabase when you are ready for live data.</p>
+          <strong>{useMockData ? 'Mock mode' : 'Supabase connected'}</strong>
+          <p>
+            {useMockData
+              ? 'Set Vercel Supabase variables and redeploy to use live data.'
+              : 'Live database mode is enabled. Internal ML will use Supabase data.'}
+          </p>
         </div>
       </aside>
 
@@ -97,7 +101,9 @@ function App() {
             <h1>{navItems.find((item) => item.id === activePage)?.label}</h1>
           </div>
           <div className="topbar-actions">
-            <span className="pill success">Live prototype</span>
+            <span className={`pill ${useMockData ? 'warning' : 'success'}`}>
+              {useMockData ? 'Demo data' : 'Live Supabase'}
+            </span>
             <button className="primary-button">Create Task</button>
           </div>
         </header>
