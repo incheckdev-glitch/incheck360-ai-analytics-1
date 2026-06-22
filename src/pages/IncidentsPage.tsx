@@ -118,7 +118,7 @@ export function IncidentsPage() {
         .from('audit_report_items')
         .select('audit_item_id,location_id,item_text,result_value,score_earned,score_total,completed_by_name,completed_at,comment_text,risk_category,is_critical,audit_reports(checklist_name,location_name_text,source_file_name,report_date),audit_report_sections(section_name)')
         .eq('organization_id', organizationId)
-        .or('is_pass.eq.false,score_earned.lt.score_total')
+        .eq('is_pass', false)
         .order('is_critical', { ascending: false })
         .order('completed_at', { ascending: false })
         .limit(100);
